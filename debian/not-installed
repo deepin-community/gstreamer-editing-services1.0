@@ -1,0 +1,2 @@
+usr/share/gstreamer-1.0/validate/scenarios/ges-edit-clip-while-paused.scenario
+usr/lib/*/gst-validate-launcher/python/launcher/apps/geslaunch.py
