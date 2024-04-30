@@ -1,0 +1,25 @@
+From: Jeremy Bicha <jeremy.bicha@canonical.com>
+Date: Fri, 27 May 2022 13:52:25 -0400
+Subject: increase test timeout
+
+https://gitlab.freedesktop.org/gstreamer/gstreamer/-/issues/1246
+---
+ tests/check/nle/nleoperation.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/tests/check/nle/nleoperation.c b/tests/check/nle/nleoperation.c
+index 2e8be8b..21ca93e 100644
+--- a/tests/check/nle/nleoperation.c
++++ b/tests/check/nle/nleoperation.c
+@@ -718,6 +718,11 @@ gnonlin_suite (void)
+ 
+   suite_add_tcase (s, tc_chain);
+ 
++  /* give the tests a little more time than the default
++   * CK_DEFAULT_TIMEOUT=20, this is sometimes needed for running under
++   * valgrind */
++  tcase_set_timeout (tc_chain, 40.0);
++
+   tcase_add_test (tc_chain, test_simple_operation);
+   tcase_add_test (tc_chain, test_pyramid_operations);
+   tcase_add_test (tc_chain, test_pyramid_operations2);

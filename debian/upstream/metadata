@@ -1,4 +1,5 @@
 Name: GStreamer Editing Services
-Bug-Database: http://gitlab.freedesktop.org/gstreamer/gst-editing-services/issues
-Repository: https://gitlab.freedesktop.org/gstreamer/gst-editing-services.git
-Repository-Browse: http://gitlab.freedesktop.org/gstreamer/gst-editing-services
+Bug-Database: https://gitlab.freedesktop.org/gstreamer/gstreamer/-/issues
+Bug-Submit: https://gitlab.freedesktop.org/gstreamer/gstreamer/-/issues/new
+Repository: https://gitlab.freedesktop.org/gstreamer/gstreamer.git
+Repository-Browse: https://gitlab.freedesktop.org/gstreamer/gstreamer

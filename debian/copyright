@@ -1,262 +1,257 @@
-This package was debianized by Sebastian Dröge <slomo@debian.org> on
-Mon, 30 Sep 2013 15:47:58 +0200.
-
-It was downloaded from http://gstreamer.freedesktop.org/data/src/gstreamer-editing-services/
-
-Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: GStreamer Editing Services 1.0
 Upstream-Contact: gstreamer-devel@lists.freedesktop.org
 Source: http://gstreamer.freedesktop.org
 
-Files: ./ges/ges-audio-source.c
- ./ges/ges-audio-source.h
- ./ges/ges-audio-uri-source.c
- ./ges/ges-audio-uri-source.h
- ./ges/ges-base-transition-clip.c
- ./ges/ges-base-transition-clip.h
- ./ges/ges-clip.c
- ./ges/ges-clip.h
- ./ges/ges-container.h
- ./ges/ges-image-source.c
- ./ges/ges-image-source.h
- ./ges/ges-internal.h
- ./ges/ges-layer.c
- ./ges/ges-layer.h
- ./ges/ges-operation-clip.c
- ./ges/ges-operation-clip.h
- ./ges/ges-operation.c
- ./ges/ges-operation.h
- ./ges/ges-pipeline.c
- ./ges/ges-pipeline.h
- ./ges/ges-simple-layer.c
- ./ges/ges-simple-layer.h
- ./ges/ges-source-clip.c
- ./ges/ges-source-clip.h
- ./ges/ges-source.c
- ./ges/ges-source.h
- ./ges/ges-test-clip.c
- ./ges/ges-text-overlay-clip.c
- ./ges/ges-timeline.c
- ./ges/ges-timeline.h
- ./ges/ges-title-clip.c
- ./ges/ges-track-element.c
- ./ges/ges-track-element.h
- ./ges/ges-track.c
- ./ges/ges-track.h
- ./ges/ges-transition-clip.c
- ./ges/ges-transition-clip.h
- ./ges/ges-types.h
- ./ges/ges-uri-clip.c
- ./ges/ges-uri-clip.h
- ./ges/ges-utils.c
- ./ges/ges-utils.h
- ./ges/ges-video-source.c
- ./ges/ges-video-source.h
- ./ges/ges-video-uri-source.c
- ./ges/ges-video-uri-source.h
- ./ges/ges.c
- ./ges/ges.h
+Files: ges/ges-audio-source.c
+ ges/ges-audio-source.h
+ ges/ges-audio-uri-source.c
+ ges/ges-audio-uri-source.h
+ ges/ges-base-transition-clip.c
+ ges/ges-base-transition-clip.h
+ ges/ges-clip.c
+ ges/ges-clip.h
+ ges/ges-container.h
+ ges/ges-image-source.c
+ ges/ges-image-source.h
+ ges/ges-internal.h
+ ges/ges-layer.c
+ ges/ges-layer.h
+ ges/ges-operation-clip.c
+ ges/ges-operation-clip.h
+ ges/ges-operation.c
+ ges/ges-operation.h
+ ges/ges-pipeline.c
+ ges/ges-pipeline.h
+ ges/ges-simple-layer.c
+ ges/ges-simple-layer.h
+ ges/ges-source-clip.c
+ ges/ges-source-clip.h
+ ges/ges-source.c
+ ges/ges-source.h
+ ges/ges-test-clip.c
+ ges/ges-text-overlay-clip.c
+ ges/ges-timeline.c
+ ges/ges-timeline.h
+ ges/ges-title-clip.c
+ ges/ges-track-element.c
+ ges/ges-track-element.h
+ ges/ges-track.c
+ ges/ges-track.h
+ ges/ges-transition-clip.c
+ ges/ges-transition-clip.h
+ ges/ges-types.h
+ ges/ges-uri-clip.c
+ ges/ges-uri-clip.h
+ ges/ges-utils.c
+ ges/ges-utils.h
+ ges/ges-video-source.c
+ ges/ges-video-source.h
+ ges/ges-video-uri-source.c
+ ges/ges-video-uri-source.h
+ ges/ges.c
+ ges/ges.h
 Copyright: 2009, Edward Hervey <edward.hervey@collabora.co.uk>
   2010, Edward Hervey <edward.hervey@collabora.co.uk>
 License: LGPL-2+
- /usr/share/common-licenses/LGPL
+ /usr/share/common-licenses/LGPL-2
 
-Files: ./ges/ges-audio-test-source.c
- ./ges/ges-audio-test-source.h
- ./ges/ges-audio-transition.c
- ./ges/ges-audio-transition.h
- ./ges/ges-enums.c
- ./ges/ges-enums.h
- ./ges/ges-formatter.c
- ./ges/ges-formatter.h
- ./ges/ges-overlay-clip.c
- ./ges/ges-overlay-clip.h
- ./ges/ges-screenshot.h
- ./ges/ges-test-clip.h
- ./ges/ges-text-overlay-clip.h
- ./ges/ges-text-overlay.c
- ./ges/ges-text-overlay.h
- ./ges/ges-title-clip.h
- ./ges/ges-title-source.c
- ./ges/ges-title-source.h
- ./ges/ges-video-test-source.c
- ./ges/ges-video-test-source.h
- ./ges/ges-video-transition.c
- ./ges/ges-video-transition.h
- ./tests/check/ges/backgroundsource.c
- ./tests/check/ges/overlays.c
- ./tests/check/ges/text_properties.c
- ./tests/check/ges/titles.c
- ./tests/examples/ges-ui.c
+Files: ges/ges-audio-test-source.c
+ ges/ges-audio-test-source.h
+ ges/ges-audio-transition.c
+ ges/ges-audio-transition.h
+ ges/ges-enums.c
+ ges/ges-enums.h
+ ges/ges-formatter.c
+ ges/ges-formatter.h
+ ges/ges-overlay-clip.c
+ ges/ges-overlay-clip.h
+ ges/ges-screenshot.h
+ ges/ges-test-clip.h
+ ges/ges-text-overlay-clip.h
+ ges/ges-text-overlay.c
+ ges/ges-text-overlay.h
+ ges/ges-title-clip.h
+ ges/ges-title-source.c
+ ges/ges-title-source.h
+ ges/ges-video-test-source.c
+ ges/ges-video-test-source.h
+ ges/ges-video-transition.c
+ ges/ges-video-transition.h
+ tests/check/ges/backgroundsource.c
+ tests/check/ges/overlays.c
+ tests/check/ges/text_properties.c
+ tests/check/ges/titles.c
+ tests/examples/ges-ui.c
 Copyright: 2009, Brandon Lewis <brandon.lewis@collabora.co.uk>
   2010, Brandon Lewis <brandon.lewis@collabora.co.uk>
 License: LGPL-2+
- /usr/share/common-licenses/LGPL
+ /usr/share/common-licenses/LGPL-2
 
-Files: ./ges/ges-base-xml-formatter.c
- ./ges/ges-base-xml-formatter.h
- ./ges/ges-effect-asset.c
- ./ges/ges-project.c
- ./ges/ges-project.h
- ./ges/ges-track-element-asset.c
- ./ges/ges-xml-formatter.c
- ./ges/ges-xml-formatter.h
- ./tests/benchmarks/timeline.c
- ./tests/check/ges/project.c
- ./tests/check/ges/test-utils.c
- ./tests/check/ges/test-utils.h
- ./tests/check/ges/timelineedition.c
+Files: ges/ges-base-xml-formatter.c
+ ges/ges-base-xml-formatter.h
+ ges/ges-effect-asset.c
+ ges/ges-project.c
+ ges/ges-project.h
+ ges/ges-track-element-asset.c
+ ges/ges-xml-formatter.c
+ ges/ges-xml-formatter.h
+ tests/benchmarks/timeline.c
+ tests/check/ges/project.c
+ tests/check/ges/test-utils.c
+ tests/check/ges/test-utils.h
+ tests/check/ges/timelineedition.c
 Copyright: <2012> Thibault Saunier <thibault.saunier@collabora.com>
 License: LGPL-2+
- /usr/share/common-licenses/LGPL
+ /usr/share/common-licenses/LGPL-2
 
-Files: ./tests/check/ges/basic.c
- ./tests/check/ges/clip.c
- ./tests/check/ges/layer.c
- ./tests/check/ges/simplelayer.c
- ./tests/check/ges/uriclip.c
- ./tests/examples/concatenate.c
- ./tests/examples/simple1.c
- ./tests/examples/test1.c
- ./tests/examples/test2.c
- ./tests/examples/test3.c
- ./tests/examples/test4.c
- ./tests/examples/thumbnails.c
- ./tools/ges-launch.c
+Files: tests/check/ges/basic.c
+ tests/check/ges/clip.c
+ tests/check/ges/layer.c
+ tests/check/ges/simplelayer.c
+ tests/check/ges/uriclip.c
+ tests/examples/concatenate.c
+ tests/examples/simple1.c
+ tests/examples/test1.c
+ tests/examples/test2.c
+ tests/examples/test3.c
+ tests/examples/test4.c
+ tests/examples/thumbnails.c
+ tools/ges-launch.c
 Copyright: 2009, Edward Hervey <bilboed@bilboed.com>
   2010, Edward Hervey <bilboed@bilboed.com>
 License: LGPL-2+
- /usr/share/common-licenses/LGPL
+ /usr/share/common-licenses/LGPL-2
 
-Files: ./ges/ges-audio-track.c
- ./ges/ges-audio-track.h
- ./ges/ges-container.c
- ./ges/ges-group.h
- ./ges/ges-video-track.c
- ./ges/ges-video-track.h
- ./tests/check/ges/group.c
+Files: ges/ges-audio-track.c
+ ges/ges-audio-track.h
+ ges/ges-container.c
+ ges/ges-group.h
+ ges/ges-video-track.c
+ ges/ges-video-track.h
+ tests/check/ges/group.c
 Copyright: <2013> Thibault Saunier <thibault.saunier@collabora.com>
 License: LGPL-2+
- /usr/share/common-licenses/LGPL
+ /usr/share/common-licenses/LGPL-2
 
-Files: ./ges/ges-base-effect-clip.c
- ./ges/ges-base-effect-clip.h
- ./ges/ges-base-effect.h
- ./ges/ges-effect-clip.c
- ./ges/ges-effect-clip.h
- ./ges/ges-effect.c
- ./ges/ges-effect.h
+Files: ges/ges-base-effect-clip.c
+ ges/ges-base-effect-clip.h
+ ges/ges-base-effect.h
+ ges/ges-effect-clip.c
+ ges/ges-effect-clip.h
+ ges/ges-effect.c
+ ges/ges-effect.h
 Copyright: 2010, Thibault Saunier <thibault.saunier@collabora.co.uk>
   2011, Thibault Saunier <thibault.saunier@collabora.co.uk>
 License: LGPL-2+
- /usr/share/common-licenses/LGPL
+ /usr/share/common-licenses/LGPL-2
 
-Files: ./ges/ges-asset.c
- ./ges/ges-asset.h
- ./ges/ges-clip-asset.h
- ./ges/ges-extractable.c
- ./ges/ges-extractable.h
- ./ges/ges-uri-asset.c
- ./ges/ges-uri-asset.h
+Files: ges/ges-asset.c
+ ges/ges-asset.h
+ ges/ges-clip-asset.h
+ ges/ges-extractable.c
+ ges/ges-extractable.h
+ ges/ges-uri-asset.c
+ ges/ges-uri-asset.h
 Copyright: 2012, Thibault Saunier <thibault.saunier@collabora.com>
   2012, Volodymyr Rudyi <vladimir.rudoy@gmail.com>
 License: LGPL-2+
- /usr/share/common-licenses/LGPL
+ /usr/share/common-licenses/LGPL-2
 
-Files: ./tests/examples/overlays.c
- ./tests/examples/text_properties.c
- ./tests/examples/transition.c
+Files: tests/examples/overlays.c
+ tests/examples/text_properties.c
+ tests/examples/transition.c
 Copyright: 2010, Brandon Lewis <brandon@alum.berkeley.edu>
 License: LGPL-2+
- /usr/share/common-licenses/LGPL
+ /usr/share/common-licenses/LGPL-2
 
-Files: ./ges/gstframepositionner.c
- ./ges/gstframepositionner.h
- ./tests/check/ges/integration.c
+Files: ges/gstframepositionner.c
+ ges/gstframepositionner.h
+ tests/check/ges/integration.c
 Copyright: 2013, Mathieu Duponchelle <mduponchelle1@gmail.com>
 License: LGPL-2+
- /usr/share/common-licenses/LGPL
+ /usr/share/common-licenses/LGPL-2
 
-Files: ./ges/ges-gerror.h
- ./ges/ges-group.c
- ./ges/ges-track-element-asset.h
+Files: ges/ges-gerror.h
+ ges/ges-group.c
+ ges/ges-track-element-asset.h
 Copyright: 2012, Thibault Saunier <thibault.saunier@collabora.com>
   2013, Thibault Saunier <thibault.saunier@collabora.com>
 License: LGPL-2+
- /usr/share/common-licenses/LGPL
+ /usr/share/common-licenses/LGPL-2
 
-Files: ./ges/ges-auto-transition.c
- ./ges/ges-auto-transition.h
- ./ges/ges-effect-asset.h
+Files: ges/ges-auto-transition.c
+ ges/ges-auto-transition.h
+ ges/ges-effect-asset.h
 Copyright: 2013, Thibault Saunier <thibault.saunier@collabora.com>
 License: LGPL-3+
- /usr/share/common-licenses/LGPL
+ /usr/share/common-licenses/LGPL-3
 
-Files: ./ges/ges-smart-adder.c
- ./ges/ges-smart-adder.h
- ./tests/check/ges/mixers.c
+Files: ges/ges-smart-adder.c
+ ges/ges-smart-adder.h
+ tests/check/ges/mixers.c
 Copyright: 2013, Thibault Saunier <tsaunier@gnome.org>
 License: LGPL-3+
- /usr/share/common-licenses/LGPL
+ /usr/share/common-licenses/LGPL-3
 
-Files: ./ges/ges-timeline-element.c
- ./ges/ges-timeline-element.h
+Files: ges/ges-timeline-element.c
+ ges/ges-timeline-element.h
 Copyright: <2013> Thibault Saunier <thibault.saunier@collabora.com>
 License: GPL-3+
  /usr/share/common-licenses/LGPL
 
-Files: ./ges/ges-transition.c
- ./ges/ges-transition.h
+Files: ges/ges-transition.c
+ ges/ges-transition.h
 Copyright: 2010, Brandon Lewis <brandon@collabora.co.uk>
 License: LGPL-2+
- /usr/share/common-licenses/LGPL
+ /usr/share/common-licenses/LGPL-2
 
-Files: ./ges/ges-pitivi-formatter.c
- ./ges/ges-pitivi-formatter.h
+Files: ges/ges-pitivi-formatter.c
+ ges/ges-pitivi-formatter.h
 Copyright: 2011-2012, Mathieu Duponchelle <seeed@laposte.net>
 License: LGPL-2+
- /usr/share/common-licenses/LGPL
+ /usr/share/common-licenses/LGPL-2
 
-Files: ./ges/ges-base-effect.c
- ./tests/check/ges/effects.c
+Files: ges/ges-base-effect.c
+ tests/check/ges/effects.c
 Copyright: 2010, Thibault Saunier <tsaunier@gnome.org>
 License: LGPL-2+
- /usr/share/common-licenses/LGPL
+ /usr/share/common-licenses/LGPL-2
 
-Files: ./ges/ges-smart-video-mixer.c
- ./ges/ges-smart-video-mixer.h
+Files: ges/ges-smart-video-mixer.c
+ ges/ges-smart-video-mixer.h
 Copyright: 2013, Mathieu Duponchelle <mduponchelle1@gmail.com>
 License: LGPL-3+
- /usr/share/common-licenses/LGPL
+ /usr/share/common-licenses/LGPL-3
 
-Files: ./bindings/python/gi/overrides/GES.py
+Files: bindings/python/gi/overrides/GES.py
 Copyright: 2012, Thibault Saunier <thibault.saunier@collabora.com>
 License: GPL-2.1+ LGPL-2.1 or later (with incorrect FSF address)
  /usr/share/common-licenses/LGPL
 
-Files: ./ges/ges-clip-asset.c
+Files: ges/ges-clip-asset.c
 Copyright: <2011> Thibault Saunier <thibault.saunier@collabora.com>
 License: LGPL-2+
- /usr/share/common-licenses/LGPL
+ /usr/share/common-licenses/LGPL-2
 
-Files: ./ges/ges-screenshot.c
+Files: ges/ges-screenshot.c
 Copyright: 2005, Tim-Philipp Müller <tim centricular net>
   2010, Brandon Lewis <brandon.lewis@collabora.co.uk>
 License: LGPL-2+
- /usr/share/common-licenses/LGPL
+ /usr/share/common-licenses/LGPL-2
 
-Files: ./tests/check/ges/transition.c
+Files: tests/check/ges/transition.c
 Copyright: 2010, Edward Hervey <brandon@collabora.co.uk>
 License: LGPL-2+
- /usr/share/common-licenses/LGPL
+ /usr/share/common-licenses/LGPL-2
 
-Files: ./ges/ges-meta-container.h
+Files: ges/ges-meta-container.h
 Copyright: 2012, Paul Lange <palango@gmx.de>
 License: LGPL-2+
- /usr/share/common-licenses/LGPL
+ /usr/share/common-licenses/LGPL-2
 
-Files: ./tests/examples/assets.c
+Files: tests/examples/assets.c
 Copyright: 2012, Volodymyr Rudyi<vladimir.rudoy@gmail.com>
 License: LGPL-2+
- /usr/share/common-licenses/LGPL
+ /usr/share/common-licenses/LGPL-2
 

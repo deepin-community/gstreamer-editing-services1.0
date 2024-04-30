@@ -38,7 +38,7 @@ _print_position (GstElement * pipeline)
     gst_element_query_duration (GST_ELEMENT (pipeline), GST_FORMAT_TIME,
         &duration);
 
-    g_print ("<position: %" GST_TIME_FORMAT " duration: %" GST_TIME_FORMAT
+    gst_print ("<position: %" GST_TIME_FORMAT " duration: %" GST_TIME_FORMAT
         "/>\r", GST_TIME_ARGS (position), GST_TIME_ARGS (duration));
   }
 
@@ -125,10 +125,7 @@ ges_validate_activate (GstPipeline * pipeline, GESLauncher * launcher,
   GstValidateRunner *runner = NULL;
   GstValidateMonitor *monitor = NULL;
 
-  if (opts->disable_validate) {
-    if (opts->scenario)
-      g_error ("Trying to run scenario: %s but validate is deactivated",
-          opts->scenario);
+  if (!opts->enable_validate) {
     opts->needs_set_state = TRUE;
     g_object_set_data (G_OBJECT (pipeline), "pposition-id",
         GUINT_TO_POINTER (g_timeout_add (200,
@@ -183,6 +180,8 @@ ges_validate_activate (GstPipeline * pipeline, GESLauncher * launcher,
 
         ges_launcher_parse_options (launcher, &ges_options_full, NULL, NULL,
             NULL);
+        opts->sanitized_timeline =
+            sanitize_timeline_description (ges_options_full, opts);
         g_strfreev (ges_options_full);
         g_strfreev (ges_options);
       }

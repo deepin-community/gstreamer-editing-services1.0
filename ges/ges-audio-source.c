@@ -126,19 +126,19 @@ ges_audio_source_create_element (GESTrackElement * trksrc)
   GstElement *topbin;
   GstElement *sub_element;
   GPtrArray *elements;
-  GESAudioSourceClass *source_class = GES_AUDIO_SOURCE_GET_CLASS (trksrc);
-  const gchar *props[] = { "volume", "mute", NULL };
+  GESSourceClass *source_class = GES_SOURCE_GET_CLASS (trksrc);
+  const gchar *volume_props[] = { "volume", "mute", NULL };
+  const gchar *audioconvert_props[] = { "mix-matrix", NULL };
   GESAudioSource *self = GES_AUDIO_SOURCE (trksrc);
 
-  if (!source_class->create_source)
-    return NULL;
+  g_assert (source_class->create_source);
 
-  sub_element = source_class->create_source (trksrc);
+  sub_element = source_class->create_source (GES_SOURCE (trksrc));
 
   GST_DEBUG_OBJECT (trksrc, "Creating a bin sub_element ! volume");
   vbin =
       gst_parse_bin_from_description
-      ("audioconvert ! audioresample ! volume name=v ! capsfilter name=audio-track-caps-filter",
+      ("audioconvert name=convert ! audioresample ! volume name=v ! capsfilter name=audio-track-caps-filter",
       TRUE, NULL);
   elements = g_ptr_array_new ();
   g_ptr_array_add (elements, vbin);
@@ -153,7 +153,12 @@ ges_audio_source_create_element (GESTrackElement * trksrc)
 
   _sync_element_to_layer_property_float (trksrc, volume, GES_META_VOLUME,
       "volume");
-  ges_track_element_add_children_props (trksrc, volume, NULL, NULL, props);
+  ges_track_element_add_children_props (trksrc, volume, NULL, NULL,
+      volume_props);
+  GstElement *audioconvert = gst_bin_get_by_name (GST_BIN (vbin), "convert");
+  ges_track_element_add_children_props (trksrc, audioconvert, NULL, NULL,
+      audioconvert_props);
+  gst_object_unref (audioconvert);
   gst_object_unref (volume);
 
   return topbin;
@@ -177,13 +182,11 @@ ges_audio_source_class_init (GESAudioSourceClass * klass)
 {
   GObjectClass *gobject_class = G_OBJECT_CLASS (klass);
   GESTrackElementClass *track_class = GES_TRACK_ELEMENT_CLASS (klass);
-  GESAudioSourceClass *audio_source_class = GES_AUDIO_SOURCE_CLASS (klass);
 
   gobject_class->dispose = ges_audio_source_dispose;
   track_class->nleobject_factorytype = "nlesource";
   track_class->create_element = ges_audio_source_create_element;
   track_class->ABI.abi.default_track_type = GES_TRACK_TYPE_AUDIO;
-  audio_source_class->create_source = NULL;
 }
 
 static void

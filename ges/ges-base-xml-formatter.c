@@ -124,7 +124,7 @@ static void
 _free_layer_entry (LayerEntry * entry)
 {
   gst_object_unref (entry->layer);
-  g_slice_free (LayerEntry, entry);
+  g_free (entry);
 }
 
 static void
@@ -133,7 +133,7 @@ _free_pending_group (PendingGroup * pgroup)
   if (pgroup->group)
     g_object_unref (pgroup->group);
   g_list_free_full (pgroup->pending_children, g_free);
-  g_slice_free (PendingGroup, pgroup);
+  g_free (pgroup);
 }
 
 G_DEFINE_ABSTRACT_TYPE_WITH_PRIVATE (GESBaseXmlFormatter,
@@ -244,7 +244,7 @@ _load_and_parse (GESBaseXmlFormatter * self, const gchar * uri, GError ** error,
 
 failed:
   g_object_unref (file);
-  GST_WARNING ("failed to load contents from \"%s\"", uri);
+  GST_INFO_OBJECT (self, "failed to load contents from \"%s\"", uri);
   g_propagate_error (error, err);
   return NULL;
 }
@@ -479,11 +479,12 @@ _add_all_groups (GESFormatter * self)
         lchild = lchild->next) {
       child = g_hash_table_lookup (priv->containers, lchild->data);
 
-      GST_DEBUG_OBJECT (tmp->data, "Adding %s child %" GST_PTR_FORMAT " %s",
+      GST_DEBUG_OBJECT (pgroup->group, "Adding %s child %" GST_PTR_FORMAT " %s",
           (const gchar *) lchild->data, child,
           GES_TIMELINE_ELEMENT_NAME (child));
       if (!ges_container_add (GES_CONTAINER (pgroup->group), child)) {
-        GST_ERROR ("%" GES_FORMAT " could not add child %p while"
+        GST_ERROR_OBJECT (pgroup->group,
+            "%" GES_FORMAT " could not add child %p while"
             " reloading, this should never happen", GES_ARGS (pgroup->group),
             child);
       }
@@ -663,7 +664,7 @@ _free_pending_asset (GESBaseXmlFormatterPrivate * priv, PendingAsset * passet)
     gst_structure_free (passet->properties);
 
   priv->pending_assets = g_list_remove (priv->pending_assets, passet);
-  g_slice_free (PendingAsset, passet);
+  g_free (passet);
 }
 
 static void
@@ -813,36 +814,9 @@ _create_profile (GESBaseXmlFormatter * self,
     gst_encoding_profile_set_description (profile, description);
     gst_encoding_profile_set_preset_name (profile, preset_name);
   }
-
-  if (preset && preset_properties) {
-    GstElement *element;
-
-    if (!g_strcmp0 (type, "container")) {
-      element = get_element_for_encoding_profile (profile,
-          GST_ELEMENT_FACTORY_TYPE_MUXER);
-    } else {
-      element = get_element_for_encoding_profile (profile,
-          GST_ELEMENT_FACTORY_TYPE_ENCODER);
-    }
-
-    if (G_UNLIKELY (!element || !GST_IS_PRESET (element))) {
-      GST_WARNING_OBJECT (element, "Element is not a GstPreset");
-      goto done;
-    }
-
-    /* If the preset doesn't exist on the system, create it */
-    if (!gst_preset_load_preset (GST_PRESET (element), preset)) {
-      gst_structure_foreach (preset_properties,
-          (GstStructureForeachFunc) set_property_foreach, element);
-
-      if (!gst_preset_save_preset (GST_PRESET (element), preset)) {
-        GST_WARNING_OBJECT (element, "Could not save preset %s", preset);
-      }
-    }
-
-  done:
-    if (element)
-      gst_object_unref (element);
+  if (preset_properties) {
+    gst_encoding_profile_set_element_properties (profile,
+        gst_structure_copy (preset_properties));
   }
 
   return profile;
@@ -869,7 +843,7 @@ ges_base_xml_formatter_add_asset (GESBaseXmlFormatter * self,
     return;
   }
 
-  passet = g_slice_new0 (PendingAsset);
+  passet = g_new0 (PendingAsset, 1);
   passet->metadatas = g_strdup (metadatas);
   passet->id = g_strdup (id);
   passet->extractable_type = extractable_type;
@@ -1032,7 +1006,7 @@ ges_base_xml_formatter_add_layer (GESBaseXmlFormatter * self,
     g_list_free (tracks);
   }
 
-  entry = g_slice_new0 (LayerEntry);
+  entry = g_new0 (LayerEntry, 1);
   entry->layer = gst_object_ref (layer);
   entry->auto_trans = auto_transition;
 
@@ -1136,7 +1110,7 @@ done:
 void
 ges_base_xml_formatter_add_source (GESBaseXmlFormatter * self,
     const gchar * track_id, GstStructure * children_properties,
-    GstStructure * properties)
+    GstStructure * properties, const gchar * metadatas)
 {
   GESBaseXmlFormatterPrivate *priv = _GET_PRIV (self);
   GESTrackElement *element = NULL;
@@ -1165,6 +1139,10 @@ ges_base_xml_formatter_add_source (GESBaseXmlFormatter * self,
   if (children_properties)
     gst_structure_foreach (children_properties,
         (GstStructureForeachFunc) _set_child_property, element);
+
+  if (metadatas)
+    ges_meta_container_add_metas_from_string (GES_META_CONTAINER
+        (element), metadatas);
 }
 
 void
@@ -1315,7 +1293,7 @@ ges_base_xml_formatter_add_group (GESBaseXmlFormatter * self,
     return;
   }
 
-  pgroup = g_slice_new0 (PendingGroup);
+  pgroup = g_new0 (PendingGroup, 1);
   pgroup->group = ges_group_new ();
 
   if (metadatas)

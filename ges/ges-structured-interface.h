@@ -37,6 +37,11 @@ _ges_add_clip_from_struct                     (GESTimeline * timeline,
                                                GError ** error);
 
 G_GNUC_INTERNAL gboolean
+_ges_add_track_from_struct                    (GESTimeline * timeline,
+                                               GstStructure * structure,
+                                               GError ** error);
+
+G_GNUC_INTERNAL gboolean
 _ges_container_add_child_from_struct          (GESTimeline * timeline,
                                                GstStructure * structure,
                                                GError ** error);
@@ -56,5 +61,9 @@ _ges_get_layer_by_priority                    (GESTimeline * timeline,
                                                gint priority);
 G_GNUC_INTERNAL gboolean
 _ges_save_timeline_if_needed (GESTimeline* timeline, GstStructure* structure, GError** error);
+
+G_GNUC_INTERNAL gboolean
+_ges_set_control_source_from_struct (GESTimeline * timeline,
+    GstStructure * structure, GError ** error);
 
 G_END_DECLS

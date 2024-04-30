@@ -167,6 +167,7 @@ ges_video_transition_class_init (GESVideoTransitionClass * klass)
    *
    * The #GESVideoStandardTransitionType currently applied on the object
    *
+   * Deprecated:1.20: Use ges_timeline_element_[sg]et_child_property instead.
    */
   properties[PROP_TRANSITION_TYPE] =
       g_param_spec_enum ("transition-type", "Transition type",
@@ -180,6 +181,7 @@ ges_video_transition_class_init (GESVideoTransitionClass * klass)
    *
    * This value represents the direction of the transition.
    *
+    * Deprecated:1.20: Use ges_timeline_element_[sg]et_child_property instead.
    */
   properties[PROP_INVERT] =
       g_param_spec_boolean ("invert", "Invert",
@@ -334,9 +336,14 @@ ges_video_transition_create_element (GESTrackElement * object)
   GstPad *sinka_target, *sinkb_target, *src_target, *sinka, *sinkb, *src;
   GESVideoTransition *self;
   GESVideoTransitionPrivate *priv;
+  const gchar *smpte_properties[] = { "invert", "border", NULL };
+  gboolean is_fade;
 
   self = GES_VIDEO_TRANSITION (object);
   priv = self->priv;
+
+  is_fade = (priv->type == GES_VIDEO_STANDARD_TRANSITION_TYPE_CROSSFADE ||
+      priv->type == GES_VIDEO_STANDARD_TRANSITION_TYPE_FADE_IN);
 
   GST_LOG ("creating a video bin");
 
@@ -370,11 +377,9 @@ ges_video_transition_create_element (GESTrackElement * object)
   g_object_set (priv->mixer_sinka, "zorder", 0, NULL);
   g_object_set (priv->mixer_sinkb, "zorder", 1, NULL);
   gst_util_set_object_arg (G_OBJECT (priv->mixer_sinka), "operator",
-      priv->type ==
-      GES_VIDEO_STANDARD_TRANSITION_TYPE_CROSSFADE ? "source" : "over");
+      is_fade ? "source" : "over");
   gst_util_set_object_arg (G_OBJECT (priv->mixer_sinkb), "operator",
-      priv->type ==
-      GES_VIDEO_STANDARD_TRANSITION_TYPE_CROSSFADE ? "add" : "over");
+      is_fade ? "add" : "over");
 
   fast_element_link (mixer, priv->positioner);
 
@@ -417,6 +422,9 @@ ges_video_transition_create_element (GESTrackElement * object)
       G_CALLBACK (duration_changed_cb), NULL);
 
   priv->pending_type = GES_VIDEO_STANDARD_TRANSITION_TYPE_NONE;
+
+  ges_track_element_add_children_props (GES_TRACK_ELEMENT (self),
+      priv->smpte, NULL, NULL, smpte_properties);
 
   return topbin;
 }
@@ -474,6 +482,13 @@ ges_video_transition_update_control_sources (GESVideoTransition * self,
         (priv->fade_out_control_source, duration, 1.0, 0.0);
     ges_video_transition_update_control_source (priv->smpte_control_source,
         duration, 0.0, 0.0);
+  } else if (type == GES_VIDEO_STANDARD_TRANSITION_TYPE_FADE_IN) {
+    ges_video_transition_update_control_source
+        (priv->fade_in_control_source, duration, 0.0, 1.0);
+    ges_video_transition_update_control_source
+        (priv->fade_out_control_source, duration, 1.0, 1.0);
+    ges_video_transition_update_control_source (priv->smpte_control_source,
+        duration, 0.0, 0.0);
   } else {
     ges_video_transition_update_control_source
         (priv->fade_in_control_source, duration, 1.0, 1.0);
@@ -525,6 +540,7 @@ ges_video_transition_set_transition_type_internal (GESVideoTransition
     * self, GESVideoStandardTransitionType type)
 {
   GESVideoTransitionPrivate *priv = self->priv;
+  gboolean is_fade;
 
   GST_DEBUG ("%p %d => %d", self, priv->type, type);
 
@@ -541,17 +557,17 @@ ges_video_transition_set_transition_type_internal (GESVideoTransition
   ges_video_transition_update_control_sources (self, type);
 
   priv->type = type;
+  is_fade = (type == GES_VIDEO_STANDARD_TRANSITION_TYPE_CROSSFADE ||
+      type == GES_VIDEO_STANDARD_TRANSITION_TYPE_FADE_IN);
 
-  if (type != GES_VIDEO_STANDARD_TRANSITION_TYPE_CROSSFADE) {
+  if (!is_fade) {
     g_object_set (priv->smpte, "type", (gint) type, NULL);
   }
 
   gst_util_set_object_arg (G_OBJECT (priv->mixer_sinka), "operator",
-      priv->type ==
-      GES_VIDEO_STANDARD_TRANSITION_TYPE_CROSSFADE ? "source" : "over");
+      is_fade ? "source" : "over");
   gst_util_set_object_arg (G_OBJECT (priv->mixer_sinkb), "operator",
-      priv->type ==
-      GES_VIDEO_STANDARD_TRANSITION_TYPE_CROSSFADE ? "add" : "over");
+      is_fade ? "add" : "over");
 
   return TRUE;
 }
@@ -565,6 +581,8 @@ ges_video_transition_set_transition_type_internal (GESVideoTransition
  * the border width of the transition. In case this value does
  * not make sense for the current transition type, it is cached
  * for later use.
+ *
+ * Deprecated:1.20: Use ges_timeline_element_set_child_property instead.
  */
 void
 ges_video_transition_set_border (GESVideoTransition * self, guint value)
@@ -583,6 +601,8 @@ ges_video_transition_set_border (GESVideoTransition * self, guint value)
  *
  * Returns: The border values of @self or -1 if not meaningful
  * (this will happen when not using a smpte transition).
+ *
+ * Deprecated:1.20: Use ges_timeline_element_get_child_property instead.
  */
 gint
 ges_video_transition_get_border (GESVideoTransition * self)
@@ -607,6 +627,8 @@ ges_video_transition_get_border (GESVideoTransition * self)
  * the direction of the transition. In case this value does
  * not make sense for the current transition type, it is cached
  * for later use.
+ *
+ * Deprecated:1.20: Use ges_timeline_element_set_child_property instead.
  */
 void
 ges_video_transition_set_inverted (GESVideoTransition * self, gboolean inverted)
@@ -624,6 +646,8 @@ ges_video_transition_set_inverted (GESVideoTransition * self, gboolean inverted)
  * the direction of the transition.
  *
  * Returns: The invert value of @self
+ *
+ * Deprecated:1.20: Use ges_timeline_element_get_child_property instead.
  */
 gboolean
 ges_video_transition_is_inverted (GESVideoTransition * self)

@@ -173,7 +173,7 @@ gap_new (GESTrack * track, GstClockTime start, GstClockTime duration)
     return NULL;
   }
 
-  new_gap = g_slice_new (Gap);
+  new_gap = g_new (Gap, 1);
   new_gap->start = start;
   new_gap->duration = duration;
   new_gap->track = track;
@@ -201,7 +201,7 @@ free_gap (Gap * gap)
       GST_TIME_ARGS (gap->duration));
   ges_nle_composition_remove_object (track->priv->composition, gap->nleobj);
 
-  g_slice_free (Gap, gap);
+  g_free (gap);
 }
 
 static inline void
@@ -454,41 +454,71 @@ ges_track_change_state (GstElement * element, GstStateChange transition)
       transition);
 }
 
+void
+ges_track_select_subtimeline_streams (GESTrack * track,
+    GstStreamCollection * collection, GstElement * subtimeline)
+{
+  GList *selected_streams = NULL;
+
+  for (gint i = 0; i < gst_stream_collection_get_size (collection); i++) {
+    GstStream *stream = gst_stream_collection_get_stream (collection, i);
+    GstStreamType stype = gst_stream_get_stream_type (stream);
+
+    if ((track->type == GES_TRACK_TYPE_VIDEO && stype == GST_STREAM_TYPE_VIDEO)
+        || (track->type == GES_TRACK_TYPE_AUDIO
+            && stype == GST_STREAM_TYPE_AUDIO)
+        || (stype == GST_STREAM_TYPE_UNKNOWN)) {
+
+      selected_streams =
+          g_list_append (selected_streams,
+          g_strdup (gst_stream_get_stream_id (stream)));
+    }
+  }
+
+  if (selected_streams) {
+    gst_element_send_event (subtimeline,
+        gst_event_new_select_streams (selected_streams));
+
+    g_list_free_full (selected_streams, g_free);
+  }
+}
+
 static void
 ges_track_handle_message (GstBin * bin, GstMessage * message)
 {
   GESTrack *track = GES_TRACK (bin);
 
-  if (GST_MESSAGE_TYPE (message) == GST_MESSAGE_STREAM_COLLECTION) {
-    gint i;
-    GList *selected_streams = NULL;
-    GstStreamCollection *collection;
+  switch (GST_MESSAGE_TYPE (message)) {
+    case GST_MESSAGE_STREAM_COLLECTION:
+      g_error ("Internal stream collection messages should be kept internal");
+      break;
+    case GST_MESSAGE_ELEMENT:
+    {
+      const GstStructure *s = gst_message_get_structure (message);
 
-    gst_message_parse_stream_collection (message, &collection);
+      if (gst_structure_has_name (s, "ges-timeline-collection")) {
+        GstStreamCollection *collection;
 
-    for (i = 0; i < gst_stream_collection_get_size (collection); i++) {
-      GstStream *stream = gst_stream_collection_get_stream (collection, i);
-      GstStreamType stype = gst_stream_get_stream_type (stream);
+        gst_structure_get (s, "collection", GST_TYPE_STREAM_COLLECTION,
+            &collection, NULL);
 
-      if ((track->type == GES_TRACK_TYPE_VIDEO
-              && stype == GST_STREAM_TYPE_VIDEO)
-          || (track->type == GES_TRACK_TYPE_AUDIO
-              && stype == GST_STREAM_TYPE_AUDIO)
-          || (stype == GST_STREAM_TYPE_UNKNOWN)) {
+        ges_track_select_subtimeline_streams (track, collection,
+            GST_ELEMENT (GST_MESSAGE_SRC (message)));
 
-        selected_streams =
-            g_list_append (selected_streams,
-            (gchar *) gst_stream_get_stream_id (stream));
+        GST_INFO_OBJECT (bin,
+            "Handled ges-timeline-collection message, dropping");
+
+        gst_message_unref (message);
+        return;
       }
-    }
 
-    if (selected_streams) {
-      gst_element_send_event (GST_ELEMENT (GST_MESSAGE_SRC (message)),
-          gst_event_new_select_streams (selected_streams));
-      g_list_free (selected_streams);
+      break;
     }
+    default:
+      break;
   }
-  gst_element_post_message (GST_ELEMENT_CAST (bin), message);
+
+  GST_BIN_CLASS (ges_track_parent_class)->handle_message (bin, message);
 }
 
 /* GObject virtual methods */
@@ -1333,7 +1363,7 @@ ges_track_remove_element (GESTrack * track, GESTrackElement * object)
  *
  * Get the #GESTrack:caps of the track.
  *
- * Returns: The caps of @track.
+ * Returns: (nullable): The caps of @track.
  */
 const GstCaps *
 ges_track_get_caps (GESTrack * track)
@@ -1443,7 +1473,7 @@ ges_track_set_create_element_for_gap_func (GESTrack * track,
  *
  * Gets the #GESTrack:restriction-caps of the track.
  *
- * Returns: (transfer full): The restriction-caps of @track.
+ * Returns: (transfer full) (nullable): The restriction-caps of @track.
  *
  * Since: 1.18
  */

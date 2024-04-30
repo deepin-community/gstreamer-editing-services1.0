@@ -367,11 +367,15 @@ GES_START_VALIDATE_ACTION (_edit)
   REPORT_UNLESS (element, beach, "Could not find element %s", element_name);
 
   if (!_get_clocktime (action->structure, "position", &position, &fposition)) {
-    fposition = 0;
-    if (!gst_structure_get_int (action->structure, "source-frame",
-            (gint *) & fposition)
-        && !gst_structure_get_int64 (action->structure, "source-frame",
-            &fposition)) {
+    gint pos;
+    gint64 pos64;
+
+    if (gst_structure_get_int (action->structure, "source-frame", &pos)) {
+      fposition = pos;
+    } else if (gst_structure_get_int64 (action->structure, "source-frame",
+            &pos64)) {
+      fposition = pos64;
+    } else {
       gchar *structstr = gst_structure_to_string (action->structure);
 
       GST_VALIDATE_REPORT_ACTION (scenario, action,
@@ -538,21 +542,39 @@ check_property (GQuark field_id, GValue * expected_value, PropertyData * data)
   GstControlBinding *binding = NULL;
 
   if (!data->on_children) {
-    GParamSpec *pspec =
-        g_object_class_find_property (G_OBJECT_GET_CLASS (data->element),
-        property);
-    if (!pspec) {
-      GST_VALIDATE_REPORT_ACTION (data->scenario, data->action,
-          SCENARIO_ACTION_EXECUTION_ERROR,
-          "Could not get property %s on %" GES_FORMAT,
-          property, GES_ARGS (data->element));
-      data->res = GST_VALIDATE_EXECUTE_ACTION_ERROR_REPORTED;
+    GObject *tmpobject, *object = g_object_ref (G_OBJECT (data->element));
+    gchar **object_prop_name = g_strsplit (property, "::", 2);
+    gint i = 0;
+    GParamSpec *pspec = NULL;
 
-      return FALSE;
+    while (TRUE) {
+      pspec =
+          g_object_class_find_property (G_OBJECT_GET_CLASS (object),
+          object_prop_name[i]);
+
+      if (!pspec) {
+        GST_VALIDATE_REPORT_ACTION (data->scenario, data->action,
+            SCENARIO_ACTION_EXECUTION_ERROR,
+            "Could not get property %s on %" GES_FORMAT,
+            object_prop_name[i], GES_ARGS (data->element));
+        data->res = GST_VALIDATE_EXECUTE_ACTION_ERROR_REPORTED;
+        g_strfreev (object_prop_name);
+
+        return FALSE;
+      }
+
+      if (!object_prop_name[++i])
+        break;
+
+      tmpobject = object;
+      g_object_get (tmpobject, pspec->name, &object, NULL);
+      g_object_unref (tmpobject);
     }
 
+    g_strfreev (object_prop_name);
     g_value_init (&cvalue, pspec->value_type);
-    g_object_get_property (G_OBJECT (data->element), property, &cvalue);
+    g_object_get_property (object, pspec->name, &cvalue);
+    g_object_unref (object);
     goto compare;
   }
 
@@ -589,7 +611,7 @@ check_property (GQuark field_id, GValue * expected_value, PropertyData * data)
       && !ges_timeline_element_get_child_property (data->element, property,
           &cvalue)) {
     GST_VALIDATE_REPORT_ACTION (data->scenario, data->action,
-        SCENARIO_ACTION_EXECUTION_ERROR, "Could not get property: %s:",
+        SCENARIO_ACTION_EXECUTION_ERROR, "Could not get child property: %s:",
         property);
     data->res = GST_VALIDATE_EXECUTE_ACTION_ERROR_REPORTED;
 
@@ -621,7 +643,7 @@ compare:
 
     GST_VALIDATE_REPORT_ACTION (data->scenario, data->action,
         SCENARIO_ACTION_CHECK_ERROR,
-        "%s:%s expected value: '(%s)%s' different than observed: '(%s)%s'",
+        "%s::%s expected value: '(%s)%s' different than observed: '(%s)%s'",
         GES_TIMELINE_ELEMENT_NAME (data->element), property,
         G_VALUE_TYPE_NAME (observed_value), expected,
         G_VALUE_TYPE_NAME (expected_value), observed);
@@ -876,73 +898,6 @@ beach:
 
 GST_END_VALIDATE_ACTION;
 
-GES_START_VALIDATE_ACTION (_set_control_source)
-{
-  guint mode;
-  GESTrackElement *element = NULL;
-
-  GstControlSource *source = NULL;
-  gchar *element_name, *property_name, *binding_type = NULL,
-      *source_type = NULL, *interpolation_mode = NULL;
-
-  REPORT_UNLESS (gst_structure_get (action->structure,
-          "element-name", G_TYPE_STRING, &element_name,
-          "property-name", G_TYPE_STRING, &property_name, NULL),
-      beach, "Wrong parameters");
-
-  TRY_GET ("binding-type", G_TYPE_STRING, &binding_type, NULL);
-  TRY_GET ("source-type", G_TYPE_STRING, &source_type, NULL);
-  TRY_GET ("interpolation-mode", G_TYPE_STRING, &interpolation_mode, NULL);
-
-  element =
-      (GESTrackElement *) (ges_timeline_get_element (timeline, element_name));
-  if (GES_IS_CLIP (element)) {
-    GList *tmp;
-    for (tmp = GES_CONTAINER_CHILDREN (element); tmp; tmp = tmp->next) {
-      if (ges_timeline_element_lookup_child (tmp->data, property_name, NULL,
-              NULL)) {
-        gst_object_replace ((GstObject **) & element, tmp->data);
-
-        break;
-      }
-    }
-  }
-  REPORT_UNLESS (GES_IS_TRACK_ELEMENT (element), beach,
-      "Could not find track element element %s (got %" GST_PTR_FORMAT ")",
-      element_name, element);
-
-  if (!binding_type)
-    binding_type = g_strdup ("direct");
-
-  REPORT_UNLESS (source_type == NULL
-      || !g_strcmp0 (source_type, "interpolation"), beach,
-      "Interpolation type %s not supported", source_type);
-  source = gst_interpolation_control_source_new ();
-
-  if (interpolation_mode)
-    REPORT_UNLESS (gst_validate_utils_enum_from_str
-        (GST_TYPE_INTERPOLATION_MODE, interpolation_mode, &mode), beach,
-        "Wrong intorpolation mode: %s", interpolation_mode);
-  else
-    mode = GST_INTERPOLATION_MODE_LINEAR;
-
-  g_object_set (source, "mode", mode, NULL);
-
-  res = ges_track_element_set_control_source (element,
-      source, property_name, binding_type);
-
-beach:
-  gst_clear_object (&element);
-  gst_clear_object (&source);
-  g_free (property_name);
-  g_free (element_name);
-  g_free (binding_type);
-  g_free (source_type);
-  g_free (interpolation_mode);
-}
-
-GST_END_VALIDATE_ACTION;
-
 GES_START_VALIDATE_ACTION (_validate_action_execute)
 {
   GError *err = NULL;
@@ -952,6 +907,8 @@ GES_START_VALIDATE_ACTION (_validate_action_execute)
   if (gst_structure_has_name (action->structure, "add-keyframe") ||
       gst_structure_has_name (action->structure, "remove-keyframe")) {
     func = _ges_add_remove_keyframe_from_struct;
+  } else if (gst_structure_has_name (action->structure, "set-control-source")) {
+    func = _ges_set_control_source_from_struct;
   } else if (gst_structure_has_name (action->structure, "add-clip")) {
     func = _ges_add_clip_from_struct;
   } else if (gst_structure_has_name (action->structure, "container-add-child")) {
@@ -1743,7 +1700,7 @@ ges_validate_register_action_types (void)
         {NULL}
       }, "Ungroup children of @container-name.", FALSE);
 
-  gst_validate_register_action_type ("set-control-source", "ges", _set_control_source,
+  gst_validate_register_action_type ("set-control-source", "ges", _validate_action_execute,
       (GstValidateActionParameter []) {
         {
           .name = "element-name",
@@ -1821,7 +1778,7 @@ ges_validate_register_action_types (void)
           .mandatory = FALSE,
         },
         {NULL}
-      }, "Remove a child from @container-name.", GST_VALIDATE_ACTION_TYPE_NONE);
+      }, "Set a keyframe on @element-name:property-name.", GST_VALIDATE_ACTION_TYPE_NONE);
 
   gst_validate_register_action_type ("copy-element", "ges", _copy_element,
       (GstValidateActionParameter []) {
@@ -1886,7 +1843,7 @@ ges_validate_register_action_types (void)
           .mandatory = FALSE,
         },
         {NULL}
-      }, "Remove a child from @container-name.", GST_VALIDATE_ACTION_TYPE_NONE);
+      }, "Remove a keyframe on @element-name:property-name.", GST_VALIDATE_ACTION_TYPE_NONE);
 
   gst_validate_register_action_type ("load-project", "ges", _load_project,
       (GstValidateActionParameter [])  {

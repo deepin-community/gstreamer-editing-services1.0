@@ -31,6 +31,18 @@
 #include "ges-launcher.h"
 #include "ges-validate.h"
 #include "utils.h"
+#include "ges-launcher-kb.h"
+
+typedef enum
+{
+  GST_PLAY_TRICK_MODE_NONE = 0,
+  GST_PLAY_TRICK_MODE_DEFAULT,
+  GST_PLAY_TRICK_MODE_DEFAULT_NO_AUDIO,
+  GST_PLAY_TRICK_MODE_KEY_UNITS,
+  GST_PLAY_TRICK_MODE_KEY_UNITS_NO_AUDIO,
+  GST_PLAY_TRICK_MODE_INSTANT_RATE,
+  GST_PLAY_TRICK_MODE_LAST
+} GstPlayTrickMode;
 
 struct _GESLauncherPrivate
 {
@@ -41,6 +53,11 @@ struct _GESLauncherPrivate
   guint signal_watch_id;
 #endif
   GESLauncherParsedOptions parsed_options;
+
+  GstPlayTrickMode trick_mode;
+  gdouble rate;
+
+  GstState desired_state;       /* as per user interaction, PAUSED or PLAYING */
 };
 
 G_DEFINE_TYPE_WITH_PRIVATE (GESLauncher, ges_launcher, G_TYPE_APPLICATION);
@@ -57,12 +74,250 @@ static const gchar *HELP_SUMMARY =
     "  By default, ges-launch-1.0 is in \"playback-mode\".";
 
 static gboolean
+play_do_seek (GESLauncher * self, gint64 pos, gdouble rate,
+    GstPlayTrickMode mode)
+{
+  GstSeekFlags seek_flags;
+  GstEvent *seek;
+
+  seek_flags = 0;
+
+  switch (mode) {
+    case GST_PLAY_TRICK_MODE_DEFAULT:
+      seek_flags |= GST_SEEK_FLAG_TRICKMODE;
+      break;
+    case GST_PLAY_TRICK_MODE_DEFAULT_NO_AUDIO:
+      seek_flags |= GST_SEEK_FLAG_TRICKMODE | GST_SEEK_FLAG_TRICKMODE_NO_AUDIO;
+      break;
+    case GST_PLAY_TRICK_MODE_KEY_UNITS:
+      seek_flags |= GST_SEEK_FLAG_TRICKMODE_KEY_UNITS;
+      break;
+    case GST_PLAY_TRICK_MODE_KEY_UNITS_NO_AUDIO:
+      seek_flags |=
+          GST_SEEK_FLAG_TRICKMODE_KEY_UNITS | GST_SEEK_FLAG_TRICKMODE_NO_AUDIO;
+      break;
+    case GST_PLAY_TRICK_MODE_NONE:
+    default:
+      break;
+  }
+
+  /* See if we can do an instant rate change (not changing dir) */
+  if (mode & GST_PLAY_TRICK_MODE_INSTANT_RATE && rate * self->priv->rate > 0) {
+    seek = gst_event_new_seek (rate, GST_FORMAT_TIME,
+        seek_flags | GST_SEEK_FLAG_INSTANT_RATE_CHANGE,
+        GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE,
+        GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
+    if (gst_element_send_event (GST_ELEMENT (self->priv->pipeline), seek)) {
+      goto done;
+    }
+  }
+
+  /* No instant rate change, need to do a flushing seek */
+  seek_flags |= GST_SEEK_FLAG_FLUSH;
+  if (rate >= 0)
+    seek = gst_event_new_seek (rate, GST_FORMAT_TIME,
+        seek_flags | GST_SEEK_FLAG_ACCURATE,
+        /* start */ GST_SEEK_TYPE_SET, pos,
+        /* stop */ GST_SEEK_TYPE_SET, GST_CLOCK_TIME_NONE);
+  else
+    seek = gst_event_new_seek (rate, GST_FORMAT_TIME,
+        seek_flags | GST_SEEK_FLAG_ACCURATE,
+        /* start */ GST_SEEK_TYPE_SET, 0,
+        /* stop */ GST_SEEK_TYPE_SET, pos);
+
+  if (!gst_element_send_event (GST_ELEMENT (self->priv->pipeline), seek))
+    return FALSE;
+
+done:
+  self->priv->rate = rate;
+  self->priv->trick_mode = mode & ~GST_PLAY_TRICK_MODE_INSTANT_RATE;
+  return TRUE;
+}
+
+static void
+restore_terminal (void)
+{
+  gst_play_kb_set_key_handler (NULL, NULL);
+}
+
+static void
+toggle_paused (GESLauncher * self)
+{
+  if (self->priv->desired_state == GST_STATE_PLAYING)
+    self->priv->desired_state = GST_STATE_PAUSED;
+  else
+    self->priv->desired_state = GST_STATE_PLAYING;
+
+  gst_element_set_state (GST_ELEMENT (self->priv->pipeline),
+      self->priv->desired_state);
+}
+
+static void
+relative_seek (GESLauncher * self, gdouble percent)
+{
+  gint64 pos = -1, step, dur;
+
+  g_return_if_fail (percent >= -1.0 && percent <= 1.0);
+
+  if (!gst_element_query_position (GST_ELEMENT (self->priv->pipeline),
+          GST_FORMAT_TIME, &pos))
+    goto seek_failed;
+
+  if (!gst_element_query_duration (GST_ELEMENT (self->priv->pipeline),
+          GST_FORMAT_TIME, &dur)) {
+    goto seek_failed;
+  }
+
+  step = dur * percent;
+  if (ABS (step) < GST_SECOND)
+    step = (percent < 0) ? -GST_SECOND : GST_SECOND;
+
+  pos = pos + step;
+  if (pos > dur) {
+    gst_print ("\n%s\n", "Reached end of self list.");
+    g_application_quit (G_APPLICATION (self));
+  } else {
+    if (pos < 0)
+      pos = 0;
+
+    play_do_seek (self, pos, self->priv->rate, self->priv->trick_mode);
+  }
+
+  return;
+
+seek_failed:
+  {
+    gst_print ("\nCould not seek.\n");
+  }
+}
+
+static gboolean
+play_set_rate_and_trick_mode (GESLauncher * self, gdouble rate,
+    GstPlayTrickMode mode)
+{
+  gint64 pos = -1;
+
+  g_return_val_if_fail (rate != 0, FALSE);
+
+  if (!gst_element_query_position (GST_ELEMENT (self->priv->pipeline),
+          GST_FORMAT_TIME, &pos))
+    return FALSE;
+
+  return play_do_seek (self, pos, rate, mode);
+}
+
+static void
+play_set_playback_rate (GESLauncher * self, gdouble rate)
+{
+  GstPlayTrickMode mode = self->priv->trick_mode;
+
+  if (play_set_rate_and_trick_mode (self, rate, mode)) {
+    gst_print ("Playback rate: %.2f", rate);
+    gst_print ("                               \n");
+  } else {
+    gst_print ("\n");
+    gst_print ("Could not change playback rate to %.2f", rate);
+    gst_print (".\n");
+  }
+}
+
+static void
+play_set_relative_playback_rate (GESLauncher * self, gdouble rate_step,
+    gboolean reverse_direction)
+{
+  gdouble new_rate = self->priv->rate + rate_step;
+
+  play_set_playback_rate (self, new_rate);
+}
+
+static const gchar *
+trick_mode_get_description (GstPlayTrickMode mode)
+{
+  switch (mode) {
+    case GST_PLAY_TRICK_MODE_NONE:
+      return "normal playback, trick modes disabled";
+    case GST_PLAY_TRICK_MODE_DEFAULT:
+      return "trick mode: default";
+    case GST_PLAY_TRICK_MODE_DEFAULT_NO_AUDIO:
+      return "trick mode: default, no audio";
+    case GST_PLAY_TRICK_MODE_KEY_UNITS:
+      return "trick mode: key frames only";
+    case GST_PLAY_TRICK_MODE_KEY_UNITS_NO_AUDIO:
+      return "trick mode: key frames only, no audio";
+    default:
+      break;
+  }
+  return "unknown trick mode";
+}
+
+static void
+play_switch_trick_mode (GESLauncher * self)
+{
+  GstPlayTrickMode new_mode = ++self->priv->trick_mode;
+  const gchar *mode_desc;
+
+  if (new_mode == GST_PLAY_TRICK_MODE_LAST)
+    new_mode = GST_PLAY_TRICK_MODE_NONE;
+
+  mode_desc = trick_mode_get_description (new_mode);
+
+  if (play_set_rate_and_trick_mode (self, self->priv->rate, new_mode)) {
+    gst_print ("Rate: %.2f (%s)                      \n", self->priv->rate,
+        mode_desc);
+  } else {
+    gst_print ("\nCould not change trick mode to %s.\n", mode_desc);
+  }
+}
+
+static void
+print_keyboard_help (void)
+{
+  static struct
+  {
+    const gchar *key_desc;
+    const gchar *key_help;
+  } key_controls[] = {
+    {
+        "space", "pause/unpause"}, {
+        "q or ESC", "quit"}, {
+        "\342\206\222", "seek forward"}, {
+        "\342\206\220", "seek backward"}, {
+        "+", "increase playback rate"}, {
+        "-", "decrease playback rate"}, {
+        "t", "enable/disable trick modes"}, {
+        "s", "change subtitle track"}, {
+        "0", "seek to beginning"}, {
+        "k", "show keyboard shortcuts"},
+  };
+  guint i, chars_to_pad, desc_len, max_desc_len = 0;
+
+  gst_print ("\n\n%s\n\n", "Interactive mode - keyboard controls:");
+
+  for (i = 0; i < G_N_ELEMENTS (key_controls); ++i) {
+    desc_len = g_utf8_strlen (key_controls[i].key_desc, -1);
+    max_desc_len = MAX (max_desc_len, desc_len);
+  }
+  ++max_desc_len;
+
+  for (i = 0; i < G_N_ELEMENTS (key_controls); ++i) {
+    chars_to_pad = max_desc_len - g_utf8_strlen (key_controls[i].key_desc, -1);
+    gst_print ("\t%s", key_controls[i].key_desc);
+    gst_print ("%-*s: ", chars_to_pad, "");
+    gst_print ("%s\n", key_controls[i].key_help);
+  }
+  gst_print ("\n");
+}
+
+static gboolean
 _parse_track_type (const gchar * option_name, const gchar * value,
     GESLauncherParsedOptions * opts, GError ** error)
 {
-  if (!get_flags_from_string (GES_TYPE_TRACK_TYPE, value, &opts->track_types))
+  guint flags = 0;
+
+  if (!get_flags_from_string (GES_TYPE_TRACK_TYPE, value, &flags))
     return FALSE;
 
+  opts->track_types = (GESTrackType) flags;
   return TRUE;
 }
 
@@ -106,6 +361,39 @@ _set_restriction_caps (GESTimeline * timeline, GESLauncherParsedOptions * opts)
 }
 
 static void
+_set_track_forward_tags (const GValue * item, gpointer unused)
+{
+  GstElement *comp = g_value_get_object (item);
+
+  g_object_set (comp, "drop-tags", FALSE, NULL);
+}
+
+static void
+_set_tracks_forward_tags (GESTimeline * timeline,
+    GESLauncherParsedOptions * opts)
+{
+  GList *tmp, *tracks;
+
+  if (!opts->forward_tags)
+    return;
+
+  tracks = ges_timeline_get_tracks (timeline);
+
+  for (tmp = tracks; tmp; tmp = tmp->next) {
+    GstIterator *it =
+        gst_bin_iterate_all_by_element_factory_name (GST_BIN (tmp->data),
+        "nlecomposition");
+
+    gst_iterator_foreach (it,
+        (GstIteratorForeachFunction) _set_track_forward_tags, NULL);
+    gst_iterator_free (it);
+  }
+
+  g_list_free_full (tracks, gst_object_unref);
+
+}
+
+static void
 _check_has_audio_video (GESLauncher * self, gint * n_audio, gint * n_video)
 {
   GList *tmp, *tracks = ges_timeline_get_tracks (self->priv->timeline);
@@ -137,24 +425,92 @@ sort_encoding_profiles (gconstpointer a, gconstpointer b)
   return 1;
 }
 
-static GstEncodingProfile *
-get_smart_profile (GESLauncher * self)
+static GList *
+_timeline_assets (GESLauncher * self)
 {
-  gint n_audio, n_video;
-  GList *tmp, *assets = NULL, *possible_profiles = NULL;
-  GstEncodingProfile *res = NULL;
+  GList *tmp, *assets = NULL;
 
-  _check_has_audio_video (self, &n_audio, &n_video);
   for (tmp = self->priv->timeline->layers; tmp; tmp = tmp->next) {
     GList *tclip, *clips = ges_layer_get_clips (tmp->data);
 
     for (tclip = clips; tclip; tclip = tclip->next) {
-      if (GES_IS_URI_CLIP (tclip->data))
+      if (GES_IS_URI_CLIP (tclip->data)) {
         assets =
             g_list_append (assets, ges_extractable_get_asset (tclip->data));
+      }
     }
     g_list_free_full (clips, gst_object_unref);
   }
+
+  return assets;
+}
+
+static GESAsset *
+_asset_for_named_clip (GESLauncher * self, const gchar * name)
+{
+  GList *tmp;
+  GESAsset *ret = NULL;
+
+  for (tmp = self->priv->timeline->layers; tmp; tmp = tmp->next) {
+    GList *tclip, *clips = ges_layer_get_clips (tmp->data);
+
+    for (tclip = clips; tclip; tclip = tclip->next) {
+      if (GES_IS_URI_CLIP (tclip->data) &&
+          !g_strcmp0 (name, ges_timeline_element_get_name (tclip->data))) {
+        ret = ges_extractable_get_asset (tclip->data);
+        break;
+      }
+    }
+
+    g_list_free_full (clips, gst_object_unref);
+
+    if (ret)
+      break;
+  }
+
+  return ret;
+}
+
+static GstEncodingProfile *
+_get_profile_from (GESLauncher * self)
+{
+  GESAsset *asset =
+      _asset_for_named_clip (self, self->priv->parsed_options.profile_from);
+  GstDiscovererInfo *info;
+  GstEncodingProfile *prof;
+
+  g_assert (asset);
+
+  info = ges_uri_clip_asset_get_info (GES_URI_CLIP_ASSET (asset));
+  prof = gst_encoding_profile_from_discoverer (info);
+
+  return prof;
+}
+
+static GstEncodingProfile *
+get_smart_profile (GESLauncher * self)
+{
+  gint n_audio, n_video;
+  GList *tmp, *assets, *possible_profiles = NULL;
+  GstEncodingProfile *res = NULL;
+
+  if (self->priv->parsed_options.profile_from) {
+    GESAsset *asset =
+        _asset_for_named_clip (self, self->priv->parsed_options.profile_from);
+    GstDiscovererInfo *info;
+    GstEncodingProfile *prof;
+
+    g_assert (asset);
+
+    info = ges_uri_clip_asset_get_info (GES_URI_CLIP_ASSET (asset));
+    prof = gst_encoding_profile_from_discoverer (info);
+
+    return prof;
+  }
+
+  _check_has_audio_video (self, &n_audio, &n_video);
+
+  assets = _timeline_assets (self);
 
   for (tmp = assets; tmp; tmp = tmp->next) {
     GESAsset *asset = tmp->data;
@@ -189,7 +545,8 @@ get_smart_profile (GESLauncher * self)
     gst_discoverer_stream_info_list_free (audio_streams);
     gst_discoverer_stream_info_list_free (video_streams);
   }
-  g_list_free_full (assets, gst_object_unref);
+
+  g_list_free (assets);
 
   if (possible_profiles) {
     possible_profiles = g_list_sort (possible_profiles, sort_encoding_profiles);
@@ -218,20 +575,24 @@ _set_rendering_details (GESLauncher * self)
   GESLauncherParsedOptions *opts = &self->priv->parsed_options;
   gboolean smart_profile = FALSE;
   GESPipelineFlags cmode = ges_pipeline_get_mode (self->priv->pipeline);
+  GESProject *proj;
+  gboolean ret = FALSE;
 
   if (cmode & GES_PIPELINE_MODE_RENDER
       || cmode & GES_PIPELINE_MODE_SMART_RENDER) {
     GST_INFO_OBJECT (self, "Rendering settings already set");
-    return TRUE;
+    ret = TRUE;
+    goto done;
   }
+
+  proj =
+      GES_PROJECT (ges_extractable_get_asset (GES_EXTRACTABLE (self->priv->
+              timeline)));
 
   /* Setup profile/encoding if needed */
   if (opts->outputuri) {
     GstEncodingProfile *prof = NULL;
     if (!opts->format) {
-      GESProject *proj =
-          GES_PROJECT (ges_extractable_get_asset (GES_EXTRACTABLE (self->priv->
-                  timeline)));
       const GList *profiles = ges_project_list_encoding_profiles (proj);
 
       if (profiles) {
@@ -249,7 +610,9 @@ _set_rendering_details (GESLauncher * self)
 
     if (!prof) {
       if (opts->format == NULL) {
-        if (opts->smartrender)
+        if (opts->profile_from)
+          prof = _get_profile_from (self);
+        else if (opts->smartrender)
           prof = get_smart_profile (self);
         if (prof)
           smart_profile = TRUE;
@@ -259,8 +622,10 @@ _set_rendering_details (GESLauncher * self)
         }
       } else {
         prof = parse_encoding_profile (opts->format);
-        if (!prof)
-          g_error ("Invalid format specified: %s", opts->format);
+        if (!prof) {
+          ges_printerr ("Invalid format specified: %s", opts->format);
+          goto done;
+        }
       }
 
       if (!prof) {
@@ -277,19 +642,59 @@ _set_rendering_details (GESLauncher * self)
       if (!prof) {
         ges_printerr ("Could not find any encoding format for %s\n",
             opts->format);
-        return FALSE;
+        goto done;
       }
 
-      g_print ("\nEncoding details:\n");
-      g_print ("================\n");
+      if (opts->container_profile) {
+        GstEncodingProfile *new_prof;
+        GList *tmp;
 
-      g_print ("  -> Output file: %s\n", opts->outputuri);
-      g_print ("  -> Profile:%s\n",
+        if (!(new_prof = parse_encoding_profile (opts->container_profile))) {
+          ges_printerr ("Failed to parse container profile %s",
+              opts->container_profile);
+          gst_object_unref (prof);
+          goto done;
+        }
+
+        if (!GST_IS_ENCODING_CONTAINER_PROFILE (new_prof)) {
+          ges_printerr ("Top level profile should be container profile");
+          gst_object_unref (prof);
+          gst_object_unref (new_prof);
+          goto done;
+        }
+
+        if (gst_encoding_container_profile_get_profiles
+            (GST_ENCODING_CONTAINER_PROFILE (new_prof))) {
+          ges_printerr ("--container-profile cannot contain children profiles");
+          gst_object_unref (prof);
+          gst_object_unref (new_prof);
+          goto done;
+        }
+
+        for (tmp = (GList *)
+            gst_encoding_container_profile_get_profiles
+            (GST_ENCODING_CONTAINER_PROFILE (prof)); tmp; tmp = tmp->next) {
+          gst_encoding_container_profile_add_profile
+              (GST_ENCODING_CONTAINER_PROFILE (new_prof),
+              GST_ENCODING_PROFILE (gst_encoding_profile_ref (tmp->data)));
+        }
+
+        gst_encoding_profile_unref (prof);
+        prof = new_prof;
+      }
+
+      gst_print ("\nEncoding details:\n");
+      gst_print ("================\n");
+
+      gst_print ("  -> Output file: %s\n", opts->outputuri);
+      gst_print ("  -> Profile:%s\n",
           smart_profile ?
           " (selected from input files format for efficient smart rendering" :
           "");
       describe_encoding_profile (prof);
-      g_print ("\n");
+      gst_print ("\n");
+
+      ges_project_add_encoding_profile (proj, prof);
     }
 
     opts->outputuri = ensure_uri (opts->outputuri);
@@ -303,14 +708,18 @@ _set_rendering_details (GESLauncher * self)
         || !ges_pipeline_set_mode (self->priv->pipeline,
             opts->smartrender ? GES_PIPELINE_MODE_SMART_RENDER :
             GES_PIPELINE_MODE_RENDER)) {
-      return FALSE;
+      goto done;
     }
 
     gst_encoding_profile_unref (prof);
   } else {
     ges_pipeline_set_mode (self->priv->pipeline, GES_PIPELINE_MODE_PREVIEW);
   }
-  return TRUE;
+
+  ret = TRUE;
+
+done:
+  return ret;
 }
 
 static void
@@ -321,7 +730,7 @@ _track_set_mixing (GESTrack * track, GESLauncherParsedOptions * opts)
   if (opts->disable_mixing || opts->smartrender)
     ges_track_set_mixing (track, FALSE);
   if (!opts->disable_mixing && opts->smartrender && !printed_mixing_disabled) {
-    g_print ("**Mixing is disabled for smart rendering to work**\n");
+    gst_print ("**Mixing is disabled for smart rendering to work**\n");
     printed_mixing_disabled = TRUE;
   }
 }
@@ -335,6 +744,46 @@ _timeline_set_user_options (GESLauncher * self, GESTimeline * timeline,
   gboolean has_audio = FALSE, has_video = FALSE;
   GESLauncherParsedOptions *opts = &self->priv->parsed_options;
 
+  if (self->priv->parsed_options.profile_from) {
+    GList *tmp, *tracks;
+    GList *audio_streams, *video_streams;
+    GESAsset *asset =
+        _asset_for_named_clip (self, self->priv->parsed_options.profile_from);
+    GstDiscovererInfo *info;
+    guint i;
+
+    if (!asset) {
+      ges_printerr
+          ("\nERROR: can't create profile from named clip, no such clip %s\n\n",
+          self->priv->parsed_options.profile_from);
+      return FALSE;
+    }
+
+    tracks = ges_timeline_get_tracks (self->priv->timeline);
+
+    for (tmp = tracks; tmp; tmp = tmp->next) {
+      ges_timeline_remove_track (timeline, tmp->data);
+    }
+
+    g_list_free_full (tracks, gst_object_unref);
+
+    info = ges_uri_clip_asset_get_info (GES_URI_CLIP_ASSET (asset));
+
+    audio_streams = gst_discoverer_info_get_audio_streams (info);
+    video_streams = gst_discoverer_info_get_video_streams (info);
+
+    for (i = 0; i < g_list_length (audio_streams); i++) {
+      ges_timeline_add_track (timeline, GES_TRACK (ges_audio_track_new ()));
+    }
+
+    for (i = 0; i < g_list_length (video_streams); i++) {
+      ges_timeline_add_track (timeline, GES_TRACK (ges_video_track_new ()));
+    }
+
+    gst_discoverer_stream_info_list_free (audio_streams);
+    gst_discoverer_stream_info_list_free (video_streams);
+  }
+
 retry:
   for (tmp = timeline->tracks; tmp; tmp = tmp->next) {
 
@@ -344,13 +793,17 @@ retry:
       has_audio = TRUE;
 
     _track_set_mixing (tmp->data, opts);
-    if (!(GES_TRACK (tmp->data)->type & opts->track_types)) {
-      ges_timeline_remove_track (timeline, tmp->data);
-      goto retry;
+
+    if (!self->priv->parsed_options.profile_from) {
+      if (!(GES_TRACK (tmp->data)->type & opts->track_types)) {
+        ges_timeline_remove_track (timeline, tmp->data);
+        goto retry;
+      }
     }
   }
 
-  if ((opts->scenario || opts->testfile) && !load_path) {
+  if ((opts->scenario || opts->testfile) && !load_path
+      && !self->priv->parsed_options.profile_from) {
     if (!has_video && opts->track_types & GES_TRACK_TYPE_VIDEO) {
       trackv = GES_TRACK (ges_video_track_new ());
 
@@ -377,6 +830,8 @@ retry:
   } else {
     _set_restriction_caps (timeline, opts);
   }
+
+  _set_tracks_forward_tags (timeline, opts);
 
   return TRUE;
 }
@@ -412,7 +867,7 @@ _project_loaded_cb (GESProject * project, GESTimeline * timeline,
       g_application_quit (G_APPLICATION (self));
     }
 
-    g_print ("\nSaving project to %s\n", uri);
+    gst_print ("\nSaving project to %s\n", uri);
     ges_project_save (project, timeline, uri, NULL, TRUE, &error);
     g_free (uri);
 
@@ -436,18 +891,33 @@ _project_loaded_cb (GESProject * project, GESTimeline * timeline,
     self->priv->seenerrors = TRUE;
     g_application_quit (G_APPLICATION (self));
   }
-  _timeline_set_user_options (self, timeline, project_uri);
-  if (project_uri) {
+
+  if (!_timeline_set_user_options (self, timeline, project_uri)) {
+    g_error ("Failed to set user options on timeline\n");
+  } else if (project_uri) {
     if (!_set_rendering_details (self))
       g_error ("Failed to setup rendering details\n");
   }
 
+
   g_free (project_uri);
 
-  if (!self->priv->seenerrors && opts->needs_set_state &&
-      gst_element_set_state (GST_ELEMENT (self->priv->pipeline),
-          GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
-    g_error ("Failed to start the pipeline\n");
+  if (!self->priv->seenerrors && opts->needs_set_state) {
+    ges_timeline_commit (self->priv->timeline);
+    if (gst_element_set_state (GST_ELEMENT (self->priv->pipeline),
+            GST_STATE_READY) == GST_STATE_CHANGE_FAILURE) {
+      g_error ("Failed to start the pipeline\n");
+    }
+
+    /* Printing the pipeline only in READY state as there might be elements
+     * tweaking it in while going to READY */
+    print_timeline (self->priv->timeline);
+    if (gst_element_set_state (GST_ELEMENT (self->priv->pipeline),
+            GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
+      g_error ("Failed to start the pipeline\n");
+    }
+  } else {
+    print_timeline (self->priv->timeline);
   }
 }
 
@@ -472,7 +942,6 @@ _create_timeline (GESLauncher * self, const gchar * serialized_timeline,
   if (proj_uri != NULL) {
     project = ges_project_new (proj_uri);
   } else if (!validate) {
-    GST_INFO ("serialized timeline is %s", serialized_timeline);
     project = ges_project_new (serialized_timeline);
   } else {
     project = ges_project_new (NULL);
@@ -498,17 +967,17 @@ _create_timeline (GESLauncher * self, const gchar * serialized_timeline,
   return TRUE;
 }
 
-typedef void (*sinkSettingFunction) (GESPipeline * pipeline,
-    GstElement * element);
+typedef void (*SetSinkFunc) (GESPipeline * pipeline, GstElement * element);
 
 static gboolean
-_set_sink (GESLauncher * self, const gchar * sink_desc,
-    sinkSettingFunction set_func)
+_set_sink (GESLauncher * self, const gchar * sink_desc, SetSinkFunc set_func)
 {
   if (sink_desc != NULL) {
     GError *err = NULL;
     GstElement *sink = gst_parse_bin_from_description_full (sink_desc, TRUE,
-        NULL, GST_PARSE_FLAG_NO_SINGLE_ELEMENT_BINS, &err);
+        NULL,
+        GST_PARSE_FLAG_NO_SINGLE_ELEMENT_BINS | GST_PARSE_FLAG_PLACE_IN_BIN,
+        &err);
     if (sink == NULL) {
       GST_ERROR ("could not create the requested videosink %s (err: %s), "
           "exiting", err ? err->message : "", sink_desc);
@@ -595,7 +1064,7 @@ bus_message_cb (GstBus * bus, GstMessage * message, GESLauncher * self)
 static gboolean
 intr_handler (GESLauncher * self)
 {
-  g_print ("interrupt received.\n");
+  gst_print ("interrupt received.\n");
 
   GST_DEBUG_BIN_TO_DOT_FILE_WITH_TS (GST_BIN (self->priv->pipeline),
       GST_DEBUG_GRAPH_SHOW_ALL, "ges-launch.interrupted");
@@ -616,8 +1085,8 @@ _save_timeline (GESLauncher * self)
   if (opts->embed_nesteds) {
     GList *tmp, *assets;
     GESProject *proj =
-        GES_PROJECT (ges_extractable_get_asset (GES_EXTRACTABLE (self->priv->
-                timeline)));
+        GES_PROJECT (ges_extractable_get_asset (GES_EXTRACTABLE (self->
+                priv->timeline)));
 
     assets = ges_project_list_assets (proj, GES_TYPE_URI_CLIP);
     for (tmp = assets; tmp; tmp = tmp->next) {
@@ -668,10 +1137,22 @@ _run_pipeline (GESLauncher * self)
   GESLauncherParsedOptions *opts = &self->priv->parsed_options;
 
   if (!opts->load_path) {
+    g_clear_pointer (&opts->sanitized_timeline, &g_free);
     if (ges_validate_activate (GST_PIPELINE (self->priv->pipeline),
             self, opts) == FALSE) {
       g_error ("Could not activate scenario %s", opts->scenario);
       return FALSE;
+    }
+
+    if (opts->sanitized_timeline) {
+      GESProject *project = ges_project_new (opts->sanitized_timeline);
+
+      if (!ges_project_load (project, self->priv->timeline, NULL)) {
+        ges_printerr ("Could not load timeline: %s\n",
+            opts->sanitized_timeline);
+        g_clear_pointer (&opts->sanitized_timeline, &g_free);
+        return FALSE;
+      }
     }
 
     if (!_timeline_set_user_options (self, self->priv->timeline, NULL)) {
@@ -683,22 +1164,12 @@ _run_pipeline (GESLauncher * self)
       g_error ("Failed to setup rendering details\n");
       return FALSE;
     }
-
-    print_timeline (self->priv->timeline);
   }
 
   bus = gst_pipeline_get_bus (GST_PIPELINE (self->priv->pipeline));
   gst_bus_add_signal_watch (bus);
   g_signal_connect (bus, "message", G_CALLBACK (bus_message_cb), self);
 
-  if (!opts->load_path) {
-    if (opts->needs_set_state
-        && gst_element_set_state (GST_ELEMENT (self->priv->pipeline),
-            GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
-      g_error ("Failed to start the pipeline\n");
-      return FALSE;
-    }
-  }
   g_application_hold (G_APPLICATION (self));
 
   return TRUE;
@@ -713,7 +1184,7 @@ _create_pipeline (GESLauncher * self, const gchar * serialized_timeline)
 
   /* Timeline creation */
   if (opts->load_path) {
-    g_printf ("Loading project from : %s\n", opts->load_path);
+    gst_print ("Loading project from : %s\n", opts->load_path);
 
     if (!(uri = ensure_uri (opts->load_path))) {
       g_error ("couldn't create uri for '%s'", opts->load_path);
@@ -722,6 +1193,9 @@ _create_pipeline (GESLauncher * self, const gchar * serialized_timeline)
   }
 
   self->priv->pipeline = ges_pipeline_new ();
+
+  if (opts->outputuri)
+    ges_pipeline_set_mode (self->priv->pipeline, 0);
 
   if (!_create_timeline (self, serialized_timeline, uri, opts->scenario
           || opts->testfile)) {
@@ -744,13 +1218,10 @@ _create_pipeline (GESLauncher * self, const gchar * serialized_timeline)
    * our timeline in. */
 
   if (opts->mute) {
-    GstElement *sink = gst_element_factory_make ("fakesink", NULL);
-
-    g_object_set (sink, "sync", TRUE, NULL);
+    GstElement *sink = gst_element_factory_make ("fakeaudiosink", NULL);
     ges_pipeline_preview_set_audio_sink (self->priv->pipeline, sink);
 
-    sink = gst_element_factory_make ("fakesink", NULL);
-    g_object_set (sink, "sync", TRUE, NULL);
+    sink = gst_element_factory_make ("fakevideosink", NULL);
     ges_pipeline_preview_set_video_sink (self->priv->pipeline, sink);
   }
 
@@ -862,6 +1333,19 @@ ges_launcher_get_rendering_option_group (GESLauncherParsedOptions * opts)
           "See ges-launch-1.0 help profile for more information. "
           "This will have no effect if no outputuri has been specified.",
         "<profile-name>"},
+    {"profile-from", 0, 0, G_OPTION_ARG_STRING, &opts->profile_from,
+          "Use clip with name <clip-name> to determine the topology and profile "
+          "of the rendered output. This will have no effect if no outputuri "
+          "has been specified.",
+        "<clip-name>"},
+    {"container-profile", 0, 0, G_OPTION_ARG_STRING, &opts->container_profile,
+          "Set a container profile for rendering. Applies after --format, "
+          "--encoding-profile and profile-from, potentially overriding the "
+          "existing top level container profile",
+        "<container-profile>"},
+    {"forward-tags", 0, 0, G_OPTION_ARG_NONE, &opts->forward_tags,
+          "Forward tags from input files to the output",
+        NULL},
     {"smart-rendering", 0, 0, G_OPTION_ARG_NONE, &opts->smartrender,
           "Avoid reencoding when rendering. This option implies --disable-mixing.",
         NULL},
@@ -911,16 +1395,18 @@ ges_launcher_parse_options (GESLauncher * self,
   gboolean owns_ctx = ctx == NULL;
   GESLauncherParsedOptions *opts = &self->priv->parsed_options;
   gchar *prev_videosink = opts->videosink, *prev_audiosink = opts->audiosink;
+
+/*  *INDENT-OFF* */
   GOptionEntry options[] = {
     {"disable-mixing", 0, 0, G_OPTION_ARG_NONE, &opts->disable_mixing,
-        "Do not use mixing elements to mix layers together.", NULL}
-    ,
+        "Do not use mixing elements to mix layers together.", NULL
+    },
     {"track-types", 't', 0, G_OPTION_ARG_CALLBACK, &_parse_track_type,
           "Specify the track types to be created. "
           "When loading a project, only relevant tracks will be added to the "
           "timeline.",
-        "<track-types>"}
-    ,
+        "<track-types>"
+    },
     {
           "video-caps",
           0,
@@ -928,8 +1414,7 @@ ges_launcher_parse_options (GESLauncher * self,
           G_OPTION_ARG_STRING,
           &opts->video_track_caps,
           "Specify the track restriction caps of the video track.",
-        }
-    ,
+    },
     {
           "audio-caps",
           0,
@@ -937,8 +1422,7 @@ ges_launcher_parse_options (GESLauncher * self,
           G_OPTION_ARG_STRING,
           &opts->audio_track_caps,
           "Specify the track restriction caps of the audio track.",
-        }
-    ,
+    },
 #ifdef HAVE_GST_VALIDATE
     {"set-test-file", 0, 0, G_OPTION_ARG_STRING, &opts->testfile,
           "ges-launch-1.0 exposes gst-validate functionalities, such as test files and scenarios."
@@ -948,8 +1432,8 @@ ges_launcher_parse_options (GESLauncher * self,
           "clips. "
           "See gst-validate-1.0 --help for more info about validate and "
           "scenarios, " "and --inspect-action-type.",
-        "</test/file/path>"}
-    ,
+        "</test/file/path>"
+    },
     {"set-scenario", 0, 0, G_OPTION_ARG_STRING, &opts->scenario,
           "ges-launch-1.0 exposes gst-validate functionalities, such as scenarios."
           " Scenarios describe actions to execute, such as seeks or setting of "
@@ -958,12 +1442,11 @@ ges_launcher_parse_options (GESLauncher * self,
           "clips. "
           "See gst-validate-1.0 --help for more info about validate and "
           "scenarios, " "and --inspect-action-type.",
-        "<scenario_name>"}
-    ,
-    {"disable-validate", 'n', 0, G_OPTION_ARG_NONE, &opts->disable_validate,
-          "Do not run inside GstValidate.",
-        "<scenario_name>"}
-    ,
+        "<scenario_name>"
+    },
+    {"enable-validate", 0, 0, G_OPTION_ARG_NONE, &opts->enable_validate,
+          "Run inside GstValidate.", NULL,
+    },
 #endif
     {
           "embed-nesteds",
@@ -972,10 +1455,19 @@ ges_launcher_parse_options (GESLauncher * self,
           G_OPTION_ARG_NONE,
           &opts->embed_nesteds,
           "Embed nested timelines when saving.",
-        }
-    ,
+          NULL,
+    },
+    {"no-interactive", 0, G_OPTION_FLAG_REVERSE, G_OPTION_ARG_NONE,
+          &opts->interactive,
+        "Disable interactive control via the keyboard", NULL
+    },
+    {"ignore-eos", 0, 0, G_OPTION_ARG_NONE,
+          &opts->ignore_eos,
+        "Ignore EOS.", NULL
+    },
     {NULL}
   };
+/*  *INDENT-ON* */
 
   if (owns_ctx) {
     opts->videosink = opts->audiosink = NULL;
@@ -1018,6 +1510,9 @@ ges_launcher_parse_options (GESLauncher * self,
 
   if (err)
     g_propagate_error (error, err);
+
+  opts->enable_validate |= opts->testfile || opts->scenario
+      || g_getenv ("GST_VALIDATE_SCENARIO");
 
   if (owns_ctx) {
     g_option_context_free (ctx);
@@ -1073,7 +1568,9 @@ _local_command_line (GApplication * application, gchar ** arguments[],
 
   if (!opts->load_path && !opts->scenario && !opts->testfile
       && !opts->list_transitions && (argc <= 1)) {
-    g_printf ("%s", g_option_context_get_help (ctx, TRUE, NULL));
+    gchar *help_str = g_option_context_get_help (ctx, TRUE, NULL);
+    gst_print ("%s", help_str);
+    g_free (help_str);
     g_option_context_free (ctx);
     *exit_status = 1;
     goto done;
@@ -1081,7 +1578,7 @@ _local_command_line (GApplication * application, gchar ** arguments[],
 
   g_option_context_free (ctx);
 
-  opts->sanitized_timeline = sanitize_timeline_description (*arguments);
+  opts->sanitized_timeline = sanitize_timeline_description (*arguments, opts);
 
   if (!g_application_register (application, NULL, &error)) {
     *exit_status = 1;
@@ -1091,6 +1588,68 @@ _local_command_line (GApplication * application, gchar ** arguments[],
 
 done:
   return res;
+}
+
+static void
+keyboard_cb (const gchar * key_input, gpointer user_data)
+{
+  GESLauncher *self = (GESLauncher *) user_data;
+  gchar key = '\0';
+
+  /* only want to switch/case on single char, not first char of string */
+  if (key_input[0] != '\0' && key_input[1] == '\0')
+    key = g_ascii_tolower (key_input[0]);
+
+  switch (key) {
+    case 'k':
+      print_keyboard_help ();
+      break;
+    case ' ':
+      toggle_paused (self);
+      break;
+    case 'q':
+    case 'Q':
+      g_application_quit (G_APPLICATION (self));
+      break;
+    case '+':
+      if (ABS (self->priv->rate) < 2.0)
+        play_set_relative_playback_rate (self, 0.1, FALSE);
+      else if (ABS (self->priv->rate) < 4.0)
+        play_set_relative_playback_rate (self, 0.5, FALSE);
+      else
+        play_set_relative_playback_rate (self, 1.0, FALSE);
+      break;
+    case '-':
+      if (ABS (self->priv->rate) <= 2.0)
+        play_set_relative_playback_rate (self, -0.1, FALSE);
+      else if (ABS (self->priv->rate) <= 4.0)
+        play_set_relative_playback_rate (self, -0.5, FALSE);
+      else
+        play_set_relative_playback_rate (self, -1.0, FALSE);
+      break;
+    case 't':
+      play_switch_trick_mode (self);
+      break;
+    case 27:                   /* ESC */
+      if (key_input[1] == '\0') {
+        g_application_quit (G_APPLICATION (self));
+        break;
+      }
+    case '0':
+      play_do_seek (self, 0, self->priv->rate, self->priv->trick_mode);
+      break;
+    default:
+      if (strcmp (key_input, GST_PLAY_KB_ARROW_RIGHT) == 0) {
+        relative_seek (self, +0.08);
+      } else if (strcmp (key_input, GST_PLAY_KB_ARROW_LEFT) == 0) {
+        relative_seek (self, -0.01);
+      } else {
+        GST_INFO ("keyboard input:");
+        for (; *key_input != '\0'; ++key_input)
+          GST_INFO ("  code %3d", *key_input);
+      }
+      break;
+  }
 }
 
 static void
@@ -1110,6 +1669,15 @@ _startup (GApplication * application)
     goto done;
   }
 
+  if (opts->interactive && !opts->outputuri) {
+    if (gst_play_kb_set_key_handler (keyboard_cb, self)) {
+      gst_print ("Press 'k' to see a list of keyboard shortcuts.\n");
+      atexit (restore_terminal);
+    } else {
+      gst_print ("Interactive keyboard handling in terminal not available.\n");
+    }
+  }
+
   if (opts->list_transitions) {
     _print_transition_list ();
     goto done;
@@ -1122,9 +1690,6 @@ _startup (GApplication * application)
     goto done;
 
   if (!_set_playback_details (self))
-    goto failure;
-
-  if (!_set_rendering_details (self))
     goto failure;
 
   if (!_run_pipeline (self))
@@ -1179,6 +1744,8 @@ _finalize (GObject * object)
   g_free (opts->outputuri);
   g_free (opts->format);
   g_free (opts->encoding_profile);
+  g_free (opts->profile_from);
+  g_free (opts->container_profile);
   g_free (opts->videosink);
   g_free (opts->audiosink);
   g_free (opts->video_track_caps);
@@ -1205,6 +1772,10 @@ ges_launcher_init (GESLauncher * self)
   self->priv = ges_launcher_get_instance_private (self);
   self->priv->parsed_options.track_types =
       GES_TRACK_TYPE_AUDIO | GES_TRACK_TYPE_VIDEO;
+  self->priv->parsed_options.interactive = TRUE;
+  self->priv->desired_state = GST_STATE_PLAYING;
+  self->priv->rate = 1.0;
+  self->priv->trick_mode = GST_PLAY_TRICK_MODE_NONE;
 }
 
 gint

@@ -35,8 +35,8 @@
 
 #define parent_class ges_xml_formatter_parent_class
 #define API_VERSION 0
-#define MINOR_VERSION 7
-#define VERSION 0.7
+#define MINOR_VERSION 8
+#define VERSION 0.8
 
 #define COLLECT_STR_OPT (G_MARKUP_COLLECT_STRING | G_MARKUP_COLLECT_OPTIONAL)
 
@@ -339,7 +339,7 @@ _parse_asset (GMarkupParseContext * context, const gchar * element_name,
 
   extractable_type = g_type_from_name (extractable_type_name);
   if (extractable_type == GES_TYPE_TIMELINE) {
-    SubprojectData *subproj_data = g_malloc0 (sizeof (SubprojectData));
+    SubprojectData *subproj_data = g_new0 (SubprojectData, 1);
     const gchar *nid;
 
     priv->subproject = subproj_data;
@@ -434,6 +434,8 @@ _parse_track (GMarkupParseContext * context, const gchar * element_name,
 
   if (properties) {
     props = gst_structure_from_string (properties, NULL);
+    if (!props)
+      goto wrong_properties;
   }
 
   ges_base_xml_formatter_add_track (GES_BASE_XML_FORMATTER (self), track_type,
@@ -458,6 +460,13 @@ convertion_failed:
       G_MARKUP_ERROR_INVALID_CONTENT,
       "element '%s', Wrong property type, error: %s'", element_name,
       g_strerror (errno));
+  return;
+
+wrong_properties:
+  gst_clear_caps (&caps);
+  g_set_error (error, G_MARKUP_ERROR,
+      G_MARKUP_ERROR_INVALID_CONTENT,
+      "element '%s', Can not create properties: %s'", element_name, properties);
   return;
 
 }
@@ -713,14 +722,15 @@ _parse_source (GMarkupParseContext * context, const gchar * element_name,
     GESXmlFormatter * self, GError ** error)
 {
   GstStructure *children_props = NULL, *props = NULL;
-  const gchar *track_id = NULL, *children_properties = NULL, *properties = NULL;
+  const gchar *track_id = NULL, *children_properties = NULL, *properties =
+      NULL, *metadatas = NULL;
 
   if (!g_markup_collect_attributes (element_name, attribute_names,
           attribute_values, error,
           G_MARKUP_COLLECT_STRING, "track-id", &track_id,
           COLLECT_STR_OPT, "children-properties", &children_properties,
           COLLECT_STR_OPT, "properties", &properties,
-          G_MARKUP_COLLECT_INVALID)) {
+          COLLECT_STR_OPT, "metadatas", &metadatas, G_MARKUP_COLLECT_INVALID)) {
     return;
   }
 
@@ -737,7 +747,7 @@ _parse_source (GMarkupParseContext * context, const gchar * element_name,
   }
 
   ges_base_xml_formatter_add_source (GES_BASE_XML_FORMATTER (self), track_id,
-      children_props, props);
+      children_props, props, metadatas);
 
 done:
   if (children_props)
@@ -1057,8 +1067,8 @@ append_escaped (GString * str, gchar * tmpstr, guint depth)
   g_free (tmpstr);
 }
 
-static inline gboolean
-_can_serialize_spec (GParamSpec * spec)
+gboolean
+ges_util_can_serialize_spec (GParamSpec * spec)
 {
   if (!(spec->flags & G_PARAM_WRITABLE)) {
     GST_LOG ("%s from %s is not writable",
@@ -1121,7 +1131,7 @@ _serialize_properties (GObject * object, gint * ret_n_props,
     GValue val = { 0 };
 
     spec = pspecs[j];
-    if (!_can_serialize_spec (spec))
+    if (!ges_util_can_serialize_spec (spec))
       continue;
 
     _init_value_from_spec_for_serialization (&val, spec);
@@ -1218,6 +1228,7 @@ _save_subproject (GESXmlFormatter * self, GString * str, GESProject * project,
   g_signal_handlers_disconnect_by_func (subproject, project_loaded_cb, &data);
   g_signal_handlers_disconnect_by_func (subproject, error_loading_asset_cb,
       &data);
+  g_main_loop_unref (data.ml);
   if (data.error) {
     g_propagate_error (error, data.error);
     return FALSE;
@@ -1234,6 +1245,8 @@ _save_subproject (GESXmlFormatter * self, GString * str, GESProject * project,
           g_type_name (ges_asset_get_extractable_type (subproject)), properties,
           metas), depth);
   self->priv->min_version = MAX (self->priv->min_version, 6);
+  g_free (properties);
+  g_free (metas);
 
   depth += 4;
   GST_DEBUG_OBJECT (self, "Saving subproject %s (depth: %d)",
@@ -1428,7 +1441,7 @@ _save_children_properties (GString * str, GESTimelineElement * element,
     GValue val = { 0 };
     spec = pspecs[i];
 
-    if (_can_serialize_spec (spec)) {
+    if (ges_util_can_serialize_spec (spec)) {
       gchar *spec_name =
           g_strdup_printf ("%s::%s", g_type_name (spec->owner_type),
           spec->name);
@@ -1610,7 +1623,7 @@ _save_source (GESXmlFormatter * self, GString * str,
 {
   gint index, n_props;
   gboolean serialize;
-  gchar *properties;
+  gchar *properties, *metas;
 
   if (!GES_IS_SOURCE (element))
     return;
@@ -1638,6 +1651,10 @@ _save_source (GESXmlFormatter * self, GString * str,
     g_string_append_printf (str, "properties='%s' ", properties);
   }
   g_free (properties);
+
+  metas = ges_meta_container_metas_to_string (GES_META_CONTAINER (element));
+  g_string_append_printf (str, "metadatas='%s' ", metas);
+  g_free (metas);
 
   _save_children_properties (str, element, depth);
   append_escaped (str, g_markup_printf_escaped (">\n"), depth);
@@ -1697,10 +1714,13 @@ _save_layers (GESXmlFormatter * self, GString * str, GESTimeline * timeline,
       extractable_id = ges_extractable_get_id (GES_EXTRACTABLE (clip));
       if (GES_IS_URI_CLIP (clip)) {
         G_LOCK (uri_subprojects_map_lock);
-        if (g_hash_table_contains (priv->subprojects_map, extractable_id))
-          extractable_id =
+        if (g_hash_table_contains (priv->subprojects_map, extractable_id)) {
+          gchar *new_extractable_id =
               g_strdup (g_hash_table_lookup (priv->subprojects_map,
                   extractable_id));
+          g_free (extractable_id);
+          extractable_id = new_extractable_id;
+        }
         G_UNLOCK (uri_subprojects_map_lock);
       }
       metas = ges_meta_container_metas_to_string (GES_META_CONTAINER (clip));
@@ -1861,6 +1881,7 @@ _save_stream_profiles (GESXmlFormatter * self, GString * str,
 {
   gchar *tmpc;
   GstCaps *tmpcaps;
+  GstStructure *properties;
   const gchar *preset, *preset_name, *name, *description;
 
   append_escaped (str,
@@ -1895,25 +1916,18 @@ _save_stream_profiles (GESXmlFormatter * self, GString * str,
 
   preset = gst_encoding_profile_get_preset (sprof);
   if (preset) {
-    GstElement *encoder;
-
     append_escaped (str, g_markup_printf_escaped ("preset='%s' ", preset),
         depth);
+  }
 
-    encoder = get_element_for_encoding_profile (sprof,
-        GST_ELEMENT_FACTORY_TYPE_ENCODER);
-    if (encoder) {
-      if (GST_IS_PRESET (encoder) &&
-          gst_preset_load_preset (GST_PRESET (encoder), preset)) {
+  properties = gst_encoding_profile_get_element_properties (sprof);
+  if (properties) {
+    gchar *props_str = gst_structure_to_string (properties);
 
-        gchar *settings =
-            _serialize_properties (G_OBJECT (encoder), NULL, NULL);
-        append_escaped (str, g_markup_printf_escaped ("preset-properties='%s' ",
-                settings), depth);
-        g_free (settings);
-      }
-      gst_object_unref (encoder);
-    }
+    append_escaped (str,
+        g_markup_printf_escaped ("preset-properties='%s' ", props_str), depth);
+    g_free (props_str);
+    gst_structure_free (properties);
   }
 
   preset_name = gst_encoding_profile_get_preset_name (sprof);
@@ -1947,6 +1961,7 @@ _save_encoding_profiles (GESXmlFormatter * self, GString * str,
     GESProject * project, guint depth)
 {
   GstCaps *profformat;
+  GstStructure *properties;
   const gchar *profname, *profdesc, *profpreset, *proftype, *profpresetname;
 
   const GList *tmp;
@@ -1968,32 +1983,19 @@ _save_encoding_profiles (GESXmlFormatter * self, GString * str,
             profname, profdesc, proftype), depth);
 
     if (profpreset) {
-      GstElement *element;
-
       append_escaped (str, g_markup_printf_escaped ("preset='%s' ",
               profpreset), depth);
+    }
 
-      if (GST_IS_ENCODING_CONTAINER_PROFILE (prof)) {
-        element = get_element_for_encoding_profile (prof,
-            GST_ELEMENT_FACTORY_TYPE_MUXER);
-      } else {
-        element = get_element_for_encoding_profile (prof,
-            GST_ELEMENT_FACTORY_TYPE_ENCODER);
-      }
+    properties = gst_encoding_profile_get_element_properties (prof);
+    if (properties) {
+      gchar *props_str = gst_structure_to_string (properties);
 
-      if (element) {
-        if (GST_IS_PRESET (element) &&
-            gst_preset_load_preset (GST_PRESET (element), profpreset)) {
-          gchar *settings =
-              _serialize_properties (G_OBJECT (element), NULL, NULL);
-          append_escaped (str,
-              g_markup_printf_escaped ("preset-properties='%s' ", settings),
-              depth);
-          g_free (settings);
-        }
-        gst_object_unref (element);
-      }
-
+      append_escaped (str,
+          g_markup_printf_escaped ("preset-properties='%s' ", props_str),
+          depth);
+      g_free (props_str);
+      gst_structure_free (properties);
     }
 
     if (profpresetname)

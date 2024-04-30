@@ -26,6 +26,8 @@
 #include <gst/video/video.h>
 
 #include "gstframepositioner.h"
+#include "ges-frame-composition-meta.h"
+#include "ges-internal.h"
 
 GST_DEBUG_CATEGORY_STATIC (_framepositioner);
 #undef GST_CAT_DEFAULT
@@ -42,21 +44,25 @@ static void gst_frame_positioner_get_property (GObject * object,
 static GstFlowReturn gst_frame_positioner_transform_ip (GstBaseTransform *
     trans, GstBuffer * buf);
 
-static gboolean
-gst_frame_positioner_meta_init (GstMeta * meta, gpointer params,
-    GstBuffer * buffer);
-static gboolean gst_frame_positioner_meta_transform (GstBuffer * dest,
-    GstMeta * meta, GstBuffer * buffer, GQuark type, gpointer data);
-
 enum
 {
   PROP_0,
   PROP_ALPHA,
+
   PROP_POSX,
+  PROP_FPOSX,
+
   PROP_POSY,
-  PROP_ZORDER,
+  PROP_FPOSY,
+
   PROP_WIDTH,
+  PROP_FWIDTH,
+
   PROP_HEIGHT,
+  PROP_FHEIGHT,
+
+  PROP_ZORDER,
+  PROP_OPERATOR,
   PROP_LAST,
 };
 
@@ -66,18 +72,73 @@ static GstStaticPadTemplate gst_frame_positioner_src_template =
 GST_STATIC_PAD_TEMPLATE ("src",
     GST_PAD_SRC,
     GST_PAD_ALWAYS,
-    GST_STATIC_CAPS ("video/x-raw")
+    GST_STATIC_CAPS ("video/x-raw(ANY)")
     );
 
 static GstStaticPadTemplate gst_frame_positioner_sink_template =
 GST_STATIC_PAD_TEMPLATE ("sink",
     GST_PAD_SINK,
     GST_PAD_ALWAYS,
-    GST_STATIC_CAPS ("video/x-raw")
+    GST_STATIC_CAPS ("video/x-raw(ANY)")
     );
 
 G_DEFINE_TYPE (GstFramePositioner, gst_frame_positioner,
     GST_TYPE_BASE_TRANSFORM);
+
+GType
+gst_compositor_operator_get_type_and_default_value (int *default_operator_value)
+{
+  static gsize _init = 0;
+  static int operator_value = 0;
+  static GType operator_gtype = G_TYPE_NONE;
+
+  if (g_once_init_enter (&_init)) {
+    GstElement *compositor =
+        gst_element_factory_create (ges_get_compositor_factory (), NULL);
+
+    GstPad *compositorPad =
+        gst_element_request_pad_simple (compositor, "sink_%u");
+
+    GParamSpec *pspec =
+        g_object_class_find_property (G_OBJECT_GET_CLASS (compositorPad),
+        "operator");
+
+    if (pspec) {
+      operator_value =
+          g_value_get_enum (g_param_spec_get_default_value (pspec));
+      operator_gtype = pspec->value_type;
+    }
+
+    gst_element_release_request_pad (compositor, compositorPad);
+    gst_object_unref (compositorPad);
+    gst_object_unref (compositor);
+
+    g_once_init_leave (&_init, 1);
+  }
+
+  if (default_operator_value)
+    *default_operator_value = operator_value;
+
+  return operator_gtype;
+}
+
+static gboolean
+scales_downstream (GstFramePositioner * self)
+{
+  if (self->scale_in_compositor)
+    return TRUE;
+
+  if (!self->track_source)
+    return self->scale_in_compositor;
+
+  GESTimelineElement *parent = GES_TIMELINE_ELEMENT_PARENT (self->track_source);
+
+  if (!parent || !GES_IS_CLIP (parent)) {
+    return self->scale_in_compositor;
+  }
+
+  return ges_clip_has_scale_effect (GES_CLIP (parent));
+}
 
 static void
 _weak_notify_cb (GstFramePositioner * pos, GObject * old)
@@ -91,9 +152,16 @@ is_user_positionned (GstFramePositioner * self)
   gint i;
   GParamSpec *positioning_props[] = {
     properties[PROP_WIDTH],
+    properties[PROP_FWIDTH],
+
     properties[PROP_HEIGHT],
+    properties[PROP_FHEIGHT],
+
     properties[PROP_POSX],
+    properties[PROP_FPOSX],
+
     properties[PROP_POSY],
+    properties[PROP_FPOSY],
   };
 
   if (self->user_positioned)
@@ -167,13 +235,22 @@ reposition_properties (GstFramePositioner * pos, gint old_track_width,
     gint old_track_height)
 {
   gint i;
+  /* *INDENT-OFF* */
   RepositionPropertyData props_data[] = {
+    {&pos->width, old_track_width, pos->track_width, properties[PROP_FWIDTH]},
     {&pos->width, old_track_width, pos->track_width, properties[PROP_WIDTH]},
-    {&pos->height, old_track_height, pos->track_height,
-        properties[PROP_HEIGHT]},
+
+    {&pos->height, old_track_height, pos->track_height, properties[PROP_FHEIGHT]},
+    {&pos->height, old_track_height, pos->track_height, properties[PROP_HEIGHT]},
+
+    {&pos->posx, old_track_width, pos->track_width, properties[PROP_FPOSX]},
     {&pos->posx, old_track_width, pos->track_width, properties[PROP_POSX]},
+
+    {&pos->posy, old_track_height, pos->track_height, properties[PROP_FPOSY]},
     {&pos->posy, old_track_height, pos->track_height, properties[PROP_POSY]},
   };
+  /* *INDENT-ON* */
+
 
   for (i = 0; i < G_N_ELEMENTS (props_data); i++) {
     GList *values, *tmp;
@@ -184,8 +261,10 @@ reposition_properties (GstFramePositioner * pos, gint old_track_width,
     GstControlBinding *binding =
         gst_object_get_control_binding (GST_OBJECT (pos), d.pspec->name);
 
-    *(d.value) =
-        *(d.value) * (gdouble) d.track_value / (gdouble) d.old_track_value;
+    if (G_PARAM_SPEC_VALUE_TYPE (d.pspec) == G_TYPE_FLOAT) {
+      *(d.value) =
+          *(d.value) * (gdouble) d.track_value / (gdouble) d.old_track_value;
+    }
 
     if (!binding)
       continue;
@@ -237,13 +316,12 @@ gst_frame_positioner_update_properties (GstFramePositioner * pos,
   if (pos->capsfilter == NULL)
     return;
 
+  caps = gst_caps_from_string ("video/x-raw(ANY)");
+
   if (pos->track_width && pos->track_height &&
-      (!track_mixing || !pos->scale_in_compositor)) {
-    caps =
-        gst_caps_new_simple ("video/x-raw", "width", G_TYPE_INT,
+      (!track_mixing || !scales_downstream (pos))) {
+    gst_caps_set_simple (caps, "width", G_TYPE_INT,
         pos->track_width, "height", G_TYPE_INT, pos->track_height, NULL);
-  } else {
-    caps = gst_caps_new_empty_simple ("video/x-raw");
   }
 
   if (pos->fps_n != -1)
@@ -288,6 +366,13 @@ gst_frame_positioner_update_properties (GstFramePositioner * pos,
   reposition_properties (pos, old_track_width, old_track_height);
 
 done:
+  if (scales_downstream (pos) && pos->natural_width && pos->natural_height) {
+    GST_DEBUG_OBJECT (pos,
+        "Forcing natural width in source make downstream scaling work");
+    gst_caps_set_simple (caps, "width", G_TYPE_INT, pos->natural_width,
+        "height", G_TYPE_INT, pos->natural_height, NULL);
+  }
+
   GST_DEBUG_OBJECT (pos, "setting caps %" GST_PTR_FORMAT, caps);
 
   g_object_set (pos->capsfilter, "caps", caps, NULL);
@@ -426,11 +511,17 @@ gst_frame_positioner_dispose (GObject * object)
 static void
 gst_frame_positioner_class_init (GstFramePositionerClass * klass)
 {
+  int default_operator_value = 0;
+  GType operator_gtype =
+      gst_compositor_operator_get_type_and_default_value
+      (&default_operator_value);
+  guint n_pspecs = PROP_LAST;
+
   GObjectClass *gobject_class = G_OBJECT_CLASS (klass);
   GstBaseTransformClass *base_transform_class =
       GST_BASE_TRANSFORM_CLASS (klass);
 
-  GST_DEBUG_CATEGORY_INIT (_framepositioner, "framepositioner",
+  GST_DEBUG_CATEGORY_INIT (_framepositioner, "gesframepositioner",
       GST_DEBUG_FG_YELLOW, "ges frame positioner");
 
   gst_element_class_add_static_pad_template (GST_ELEMENT_CLASS (klass),
@@ -459,9 +550,19 @@ gst_frame_positioner_class_init (GstFramePositionerClass * klass)
    * The desired x position for the stream.
    */
   properties[PROP_POSX] =
-      g_param_spec_int ("posx", "posx", "x position of the stream", MIN_PIXELS,
-      MAX_PIXELS, 0, G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE);
+      g_param_spec_int ("posx", "posx", "x position of the stream",
+      MIN_PIXELS, MAX_PIXELS, 0,
+      G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_LAX_VALIDATION);
 
+  /**
+   * gstframepositioner:fposx:
+   *
+   * The desired x position for the stream.
+   */
+  properties[PROP_FPOSX] =
+      g_param_spec_float ("fposx", "fposx", "x position of the stream in float",
+      MIN_PIXELS, MAX_PIXELS, 0,
+      G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_LAX_VALIDATION);
 
   /**
    * gstframepositioner:posy:
@@ -469,8 +570,20 @@ gst_frame_positioner_class_init (GstFramePositionerClass * klass)
    * The desired y position for the stream.
    */
   properties[PROP_POSY] =
-      g_param_spec_int ("posy", "posy", "y position of the stream", MIN_PIXELS,
-      MAX_PIXELS, 0, G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE);
+      g_param_spec_int ("posy", "posy", "y position of the stream",
+      MIN_PIXELS, MAX_PIXELS, 0,
+      G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_LAX_VALIDATION);
+
+
+  /**
+   * gstframepositioner:fposy:
+   *
+   * The desired y position for the stream.
+   */
+  properties[PROP_FPOSY] =
+      g_param_spec_float ("fposy", "fposy", "y position of the stream in float",
+      MIN_PIXELS, MAX_PIXELS, 0,
+      G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_LAX_VALIDATION);
 
   /**
    * gstframepositioner:zorder:
@@ -488,8 +601,20 @@ gst_frame_positioner_class_init (GstFramePositionerClass * klass)
    * Set to 0 if size is not mandatory, will be set to width of the current track.
    */
   properties[PROP_WIDTH] =
-      g_param_spec_int ("width", "width", "width of the source", 0, MAX_PIXELS,
-      0, G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE);
+      g_param_spec_int ("width", "width", "width of the source", 0,
+      MAX_PIXELS, 0,
+      G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_LAX_VALIDATION);
+
+  /**
+   * gesframepositioner:fwidth:
+   *
+   * The desired width for that source.
+   * Set to 0 if size is not mandatory, will be set to width of the current track.
+   */
+  properties[PROP_FWIDTH] =
+      g_param_spec_float ("fwidth", "fwidth", "width of the source in float", 0,
+      MAX_PIXELS, 0,
+      G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_LAX_VALIDATION);
 
   /**
    * gesframepositioner:height:
@@ -499,9 +624,37 @@ gst_frame_positioner_class_init (GstFramePositionerClass * klass)
    */
   properties[PROP_HEIGHT] =
       g_param_spec_int ("height", "height", "height of the source", 0,
-      MAX_PIXELS, 0, G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE);
+      MAX_PIXELS, 0,
+      G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_LAX_VALIDATION);
 
-  g_object_class_install_properties (gobject_class, PROP_LAST, properties);
+  /**
+   * gesframepositioner:fheight:
+   *
+   * The desired height for that source.
+   * Set to 0 if size is not mandatory, will be set to height of the current track.
+   */
+  properties[PROP_FHEIGHT] =
+      g_param_spec_float ("fheight", "fheight", "height of the source in float",
+      0, MAX_PIXELS, 0,
+      G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_LAX_VALIDATION);
+
+  /**
+   * gesframepositioner:operator:
+   *
+   * The blending operator for the source.
+   */
+  if (operator_gtype != G_TYPE_NONE) {
+    properties[PROP_OPERATOR] =
+        g_param_spec_enum ("operator", "Operator",
+        "Blending operator to use for blending this pad over the previous ones",
+        operator_gtype, default_operator_value,
+        (G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE |
+            GST_PARAM_CONDITIONALLY_AVAILABLE | G_PARAM_STATIC_STRINGS));
+  } else {
+    n_pspecs--;
+  }
+
+  g_object_class_install_properties (gobject_class, n_pspecs, properties);
 
   gst_element_class_set_static_metadata (GST_ELEMENT_CLASS (klass),
       "frame positioner", "Metadata",
@@ -512,12 +665,16 @@ gst_frame_positioner_class_init (GstFramePositionerClass * klass)
 static void
 gst_frame_positioner_init (GstFramePositioner * framepositioner)
 {
+  int default_operator_value;
+  gst_compositor_operator_get_type_and_default_value (&default_operator_value);
+
   framepositioner->alpha = 1.0;
   framepositioner->posx = 0.0;
   framepositioner->posy = 0.0;
   framepositioner->zorder = 0;
   framepositioner->width = 0;
   framepositioner->height = 0;
+  framepositioner->operator = default_operator_value;
   framepositioner->fps_n = -1;
   framepositioner->fps_d = -1;
   framepositioner->track_width = 0;
@@ -551,8 +708,16 @@ gst_frame_positioner_set_property (GObject * object, guint property_id,
       framepositioner->posx = g_value_get_int (value);
       framepositioner->user_positioned = TRUE;
       break;
+    case PROP_FPOSX:
+      framepositioner->posx = g_value_get_float (value);
+      framepositioner->user_positioned = TRUE;
+      break;
     case PROP_POSY:
       framepositioner->posy = g_value_get_int (value);
+      framepositioner->user_positioned = TRUE;
+      break;
+    case PROP_FPOSY:
+      framepositioner->posy = g_value_get_float (value);
       framepositioner->user_positioned = TRUE;
       break;
     case PROP_ZORDER:
@@ -564,9 +729,26 @@ gst_frame_positioner_set_property (GObject * object, guint property_id,
       gst_frame_positioner_update_properties (framepositioner, track_mixing,
           0, 0);
       break;
+    case PROP_FWIDTH:
+      framepositioner->user_positioned = TRUE;
+      framepositioner->width = g_value_get_float (value);
+      gst_frame_positioner_update_properties (framepositioner, track_mixing,
+          0, 0);
+      break;
     case PROP_HEIGHT:
       framepositioner->user_positioned = TRUE;
       framepositioner->height = g_value_get_int (value);
+      gst_frame_positioner_update_properties (framepositioner, track_mixing,
+          0, 0);
+      break;
+    case PROP_FHEIGHT:
+      framepositioner->user_positioned = TRUE;
+      framepositioner->height = g_value_get_float (value);
+      gst_frame_positioner_update_properties (framepositioner, track_mixing,
+          0, 0);
+      break;
+    case PROP_OPERATOR:
+      framepositioner->operator = g_value_get_enum (value);
       gst_frame_positioner_update_properties (framepositioner, track_mixing,
           0, 0);
       break;
@@ -582,7 +764,7 @@ gst_frame_positioner_get_property (GObject * object, guint property_id,
     GValue * value, GParamSpec * pspec)
 {
   GstFramePositioner *pos = GST_FRAME_POSITIONNER (object);
-  gint real_width, real_height;
+  gdouble real_width, real_height;
 
   switch (property_id) {
     case PROP_ALPHA:
@@ -591,8 +773,14 @@ gst_frame_positioner_get_property (GObject * object, guint property_id,
     case PROP_POSX:
       g_value_set_int (value, round (pos->posx));
       break;
+    case PROP_FPOSX:
+      g_value_set_float (value, pos->posx);
+      break;
     case PROP_POSY:
       g_value_set_int (value, round (pos->posy));
+      break;
+    case PROP_FPOSY:
+      g_value_set_float (value, pos->posy);
       break;
     case PROP_ZORDER:
       g_value_set_uint (value, pos->zorder);
@@ -601,19 +789,36 @@ gst_frame_positioner_get_property (GObject * object, guint property_id,
       if (pos->scale_in_compositor) {
         g_value_set_int (value, round (pos->width));
       } else {
-        real_width =
-            pos->width > 0 ? round (pos->width) : round (pos->track_width);
-        g_value_set_int (value, real_width);
+        real_width = pos->width > 0 ? pos->width : pos->track_width;
+        g_value_set_int (value, round (real_width));
+      }
+      break;
+    case PROP_FWIDTH:
+      if (pos->scale_in_compositor) {
+        g_value_set_float (value, pos->width);
+      } else {
+        real_width = pos->width > 0 ? pos->width : pos->track_width;
+        g_value_set_float (value, real_width);
       }
       break;
     case PROP_HEIGHT:
       if (pos->scale_in_compositor) {
         g_value_set_int (value, round (pos->height));
       } else {
-        real_height =
-            pos->height > 0 ? round (pos->height) : round (pos->track_height);
-        g_value_set_int (value, real_height);
+        real_height = pos->height > 0 ? pos->height : pos->track_height;
+        g_value_set_int (value, round (real_height));
       }
+      break;
+    case PROP_FHEIGHT:
+      if (pos->scale_in_compositor) {
+        g_value_set_float (value, pos->height);
+      } else {
+        real_height = pos->height > 0 ? pos->height : pos->track_height;
+        g_value_set_float (value, real_height);
+      }
+      break;
+    case PROP_OPERATOR:
+      g_value_set_enum (value, pos->operator);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
@@ -621,79 +826,10 @@ gst_frame_positioner_get_property (GObject * object, guint property_id,
   }
 }
 
-GType
-gst_frame_positioner_meta_api_get_type (void)
-{
-  static GType type;
-  static const gchar *tags[] = { "video", NULL };
-
-  if (g_once_init_enter (&type)) {
-    GType _type = gst_meta_api_type_register ("GstFramePositionerApi", tags);
-    g_once_init_leave (&type, _type);
-  }
-  return type;
-}
-
-static const GstMetaInfo *
-gst_frame_positioner_get_info (void)
-{
-  static const GstMetaInfo *meta_info = NULL;
-
-  if (g_once_init_enter ((GstMetaInfo **) & meta_info)) {
-    const GstMetaInfo *meta =
-        gst_meta_register (gst_frame_positioner_meta_api_get_type (),
-        "GstFramePositionerMeta",
-        sizeof (GstFramePositionerMeta), gst_frame_positioner_meta_init,
-        NULL,
-        gst_frame_positioner_meta_transform);
-    g_once_init_leave ((GstMetaInfo **) & meta_info, (GstMetaInfo *) meta);
-  }
-  return meta_info;
-}
-
-static gboolean
-gst_frame_positioner_meta_init (GstMeta * meta, gpointer params,
-    GstBuffer * buffer)
-{
-  GstFramePositionerMeta *smeta;
-
-  smeta = (GstFramePositionerMeta *) meta;
-
-  smeta->alpha = 0.0;
-  smeta->posx = smeta->posy = smeta->height = smeta->width = 0;
-  smeta->zorder = 0;
-
-  return TRUE;
-}
-
-static gboolean
-gst_frame_positioner_meta_transform (GstBuffer * dest, GstMeta * meta,
-    GstBuffer * buffer, GQuark type, gpointer data)
-{
-  GstFramePositionerMeta *dmeta, *smeta;
-
-  smeta = (GstFramePositionerMeta *) meta;
-
-  if (GST_META_TRANSFORM_IS_COPY (type)) {
-    /* only copy if the complete data is copied as well */
-    dmeta =
-        (GstFramePositionerMeta *) gst_buffer_add_meta (dest,
-        gst_frame_positioner_get_info (), NULL);
-    dmeta->alpha = smeta->alpha;
-    dmeta->posx = smeta->posx;
-    dmeta->posy = smeta->posy;
-    dmeta->width = smeta->width;
-    dmeta->height = smeta->height;
-    dmeta->zorder = smeta->zorder;
-  }
-
-  return TRUE;
-}
-
 static GstFlowReturn
 gst_frame_positioner_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
 {
-  GstFramePositionerMeta *meta;
+  GESFrameCompositionMeta *meta;
   GstFramePositioner *framepositioner = GST_FRAME_POSITIONNER (trans);
   GstClockTime timestamp = GST_BUFFER_PTS (buf);
 
@@ -701,18 +837,58 @@ gst_frame_positioner_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
     gst_object_sync_values (GST_OBJECT (trans), timestamp);
   }
 
-  meta =
-      (GstFramePositionerMeta *) gst_buffer_add_meta (buf,
-      gst_frame_positioner_get_info (), NULL);
+  meta = ges_buffer_add_frame_composition_meta (buf);
 
   GST_OBJECT_LOCK (framepositioner);
   meta->alpha = framepositioner->alpha;
-  meta->posx = round (framepositioner->posx);
-  meta->posy = round (framepositioner->posy);
-  meta->width = round (framepositioner->width);
-  meta->height = round (framepositioner->height);
+  meta->posx = framepositioner->posx;
+  meta->posy = framepositioner->posy;
+  meta->width = framepositioner->width;
+  meta->height = framepositioner->height;
   meta->zorder = framepositioner->zorder;
+  meta->operator = framepositioner->operator;
   GST_OBJECT_UNLOCK (framepositioner);
 
   return GST_FLOW_OK;
+}
+
+gboolean
+gst_frame_positioner_check_can_add_binding (GstFramePositioner * self,
+    const gchar * property_name)
+{
+  gint i = 0;
+  const gchar *checked_prop = NULL;
+  const gchar *props[][2] = {
+    {"posx", "fposx"},
+    {"posy", "fposy"},
+    {"width", "fwidth"},
+    {"height", "fheight"},
+  };
+
+
+  for (i = 0; i < G_N_ELEMENTS (props); i++) {
+    if (!g_strcmp0 (property_name, props[i][0])) {
+      checked_prop = props[i][1];
+      break;
+    } else if (!g_strcmp0 (property_name, props[i][1])) {
+      checked_prop = props[i][0];
+      break;
+    }
+  }
+
+  if (!checked_prop)
+    return TRUE;
+
+  GstControlBinding *b =
+      gst_object_get_control_binding (GST_OBJECT (self), checked_prop);
+  if (b) {
+    gst_object_unref (b);
+    GST_WARNING_OBJECT (self,
+        "Can't add control binding for %s as %s already has one", property_name,
+        checked_prop);
+
+    return FALSE;
+  }
+
+  return TRUE;
 }

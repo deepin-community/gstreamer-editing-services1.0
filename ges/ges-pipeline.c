@@ -242,7 +242,7 @@ _timeline_track_added_cb (GESTimeline * timeline, GESTrack * track,
     GESPipeline * pipeline)
 {
   track_disable_last_gap (track,
-      ! !(pipeline->priv->mode & (GES_PIPELINE_MODE_RENDER |
+      !!(pipeline->priv->mode & (GES_PIPELINE_MODE_RENDER |
               GES_PIPELINE_MODE_SMART_RENDER)));
   _link_track (pipeline, track);
 }
@@ -252,6 +252,17 @@ _timeline_track_removed_cb (GESTimeline * timeline, GESTrack * track,
     GESPipeline * pipeline)
 {
   _unlink_track (pipeline, track);
+}
+
+
+static void
+ges_pipeline_constructed (GObject * object)
+{
+  GESPipeline *self = GES_PIPELINE (object);
+
+  ges_pipeline_set_mode (self, DEFAULT_TIMELINE_MODE);
+
+  ((GObjectClass *) ges_pipeline_parent_class)->constructed (object);
 }
 
 static void
@@ -301,6 +312,8 @@ ges_pipeline_class_init (GESPipelineClass * klass)
   GST_DEBUG_CATEGORY_INIT (ges_pipeline_debug, "gespipeline",
       GST_DEBUG_FG_YELLOW, "ges pipeline");
 
+
+  object_class->constructed = ges_pipeline_constructed;
   object_class->dispose = ges_pipeline_dispose;
   object_class->get_property = ges_pipeline_get_property;
   object_class->set_property = ges_pipeline_set_property;
@@ -397,15 +410,14 @@ ges_pipeline_init (GESPipeline * self)
   self->priv->playsink =
       gst_element_factory_make ("playsink", "internal-sinks");
   self->priv->encodebin =
-      gst_element_factory_make ("encodebin", "internal-encodebin");
+      gst_element_factory_make ("encodebin2", "internal-encodebin");
+
   g_object_set (self->priv->encodebin, "avoid-reencoding", TRUE, NULL);
 
   if (G_UNLIKELY (self->priv->playsink == NULL))
     goto no_playsink;
   if (G_UNLIKELY (self->priv->encodebin == NULL))
     goto no_encodebin;
-
-  ges_pipeline_set_mode (self, DEFAULT_TIMELINE_MODE);
 
   return;
 
@@ -505,7 +517,8 @@ _link_tracks (GESPipeline * pipeline)
 {
   GList *tmp;
 
-  GST_DEBUG_OBJECT (pipeline, "Linking tracks");
+  GST_DEBUG_OBJECT (pipeline, "Linking %d tracks",
+      g_list_length (pipeline->priv->timeline->tracks));
 
   if (!pipeline->priv->timeline) {
     GST_INFO_OBJECT (pipeline, "Not timeline set yet, doing nothing");
@@ -616,8 +629,8 @@ ges_pipeline_change_state (GstElement * element, GstStateChange transition)
 
       for (tmp = self->priv->not_rendered_tracks; tmp; tmp = tmp->next)
         gst_element_set_locked_state (tmp->data, FALSE);
-    }
       break;
+    }
     case GST_STATE_CHANGE_PAUSED_TO_PLAYING:
     {
       GstElement *queue = gst_bin_get_by_name (GST_BIN (self->priv->playsink),
@@ -849,14 +862,14 @@ _link_track (GESPipeline * self, GESTrack * track)
 
     /* Request a sinkpad from playsink */
     if (G_UNLIKELY (!(sinkpad =
-                gst_element_get_request_pad (self->priv->playsink,
+                gst_element_request_pad_simple (self->priv->playsink,
                     sinkpad_name)))) {
       GST_ELEMENT_ERROR (self, CORE, NEGOTIATION,
           (NULL), ("Could not get a pad from playsink for %s", sinkpad_name));
       goto error;
     }
 
-    tmppad = gst_element_get_request_pad (chain->tee, "src_%u");
+    tmppad = gst_element_request_pad_simple (chain->tee, "src_%u");
     lret = gst_pad_link_full (tmppad, sinkpad, GST_PAD_LINK_CHECK_NOTHING);
     if (G_UNLIKELY (lret != GST_PAD_LINK_OK)) {
       gst_object_unref (tmppad);
@@ -912,7 +925,7 @@ _link_track (GESPipeline * self, GESTrack * track)
       GST_INFO_OBJECT (track, "Linked to %" GST_PTR_FORMAT, sinkpad);
     }
 
-    tmppad = gst_element_get_request_pad (chain->tee, "src_%u");
+    tmppad = gst_element_request_pad_simple (chain->tee, "src_%u");
     if (G_UNLIKELY (gst_pad_link_full (tmppad, chain->encodebinpad,
                 GST_PAD_LINK_CHECK_NOTHING) != GST_PAD_LINK_OK)) {
       GST_ERROR_OBJECT (self, "Couldn't link track pad to encodebin");
@@ -987,7 +1000,7 @@ _unlink_track (GESPipeline * self, GESTrack * track)
 /**
  * ges_pipeline_set_timeline:
  * @pipeline: A #GESPipeline
- * @timeline: (transfer full): The timeline to set for @pipeline
+ * @timeline: (transfer floating): The timeline to set for @pipeline
  *
  * Takes the given timeline and sets it as the #GESPipeline:timeline for
  * the pipeline.
@@ -1208,7 +1221,7 @@ ges_pipeline_set_mode (GESPipeline * pipeline, GESPipelineFlags mode)
 
   if (pipeline->priv->timeline) {
     gboolean disabled =
-        ! !(mode & (GES_PIPELINE_MODE_RENDER | GES_PIPELINE_MODE_SMART_RENDER));
+        !!(mode & (GES_PIPELINE_MODE_RENDER | GES_PIPELINE_MODE_SMART_RENDER));
 
     for (tmp = pipeline->priv->timeline->tracks; tmp; tmp = tmp->next)
       track_disable_last_gap (GES_TRACK (tmp->data), disabled);
@@ -1228,6 +1241,7 @@ ges_pipeline_set_mode (GESPipeline * pipeline, GESPipelineFlags mode)
 
     /* Disable render bin */
     GST_DEBUG ("Disabling rendering bin");
+    ges_timeline_thaw_commit (pipeline->priv->timeline);
     gst_object_ref (pipeline->priv->encodebin);
     gst_object_ref (pipeline->priv->urisink);
     gst_bin_remove_many (GST_BIN_CAST (pipeline),
@@ -1249,24 +1263,39 @@ ges_pipeline_set_mode (GESPipeline * pipeline, GESPipelineFlags mode)
       (mode & (GES_PIPELINE_MODE_RENDER | GES_PIPELINE_MODE_SMART_RENDER))) {
     /* Adding render bin */
     GST_DEBUG ("Adding render bin");
-
+    /* in render mode the commit needs to be locked, see #136 */
+    ges_timeline_freeze_commit (pipeline->priv->timeline);
     if (G_UNLIKELY (pipeline->priv->urisink == NULL)) {
       GST_ERROR_OBJECT (pipeline, "Output URI not set !");
       return FALSE;
     }
+
     if (!gst_bin_add (GST_BIN_CAST (pipeline), pipeline->priv->encodebin)) {
       GST_ERROR_OBJECT (pipeline, "Couldn't add encodebin");
       return FALSE;
     }
-    if (!gst_bin_add (GST_BIN_CAST (pipeline), pipeline->priv->urisink)) {
-      GST_ERROR_OBJECT (pipeline, "Couldn't add URI sink");
-      return FALSE;
+
+    /* We know that encodebin2 will add its src pads as soon as the profile is
+     * set, so link the sink to it if it has a pad */
+    if (pipeline->priv->encodebin->numsrcpads > 0) {
+      if (pipeline->priv->encodebin->numsrcpads > 1) {
+        GST_WARNING_OBJECT (pipeline,
+            "Encodebin has more than one srcpad, this is not supported yet");
+      }
+
+      if (!gst_bin_add (GST_BIN_CAST (pipeline), pipeline->priv->urisink)) {
+        GST_ERROR_OBJECT (pipeline, "Couldn't add URI sink");
+        return FALSE;
+      }
+
+      gst_element_link_pads_full (pipeline->priv->encodebin, "src_0",
+          pipeline->priv->urisink, "sink", GST_PAD_LINK_CHECK_NOTHING);
+    } else {
+      GST_INFO_OBJECT (pipeline,
+          "Using an muxing sink, not adding any sink element");
     }
     g_object_set (pipeline->priv->encodebin, "avoid-reencoding",
         !(!(mode & GES_PIPELINE_MODE_SMART_RENDER)), NULL);
-
-    gst_element_link_pads_full (pipeline->priv->encodebin, "src",
-        pipeline->priv->urisink, "sink", GST_PAD_LINK_CHECK_NOTHING);
   }
 
   if (pipeline->priv->timeline) {
@@ -1297,7 +1326,7 @@ ges_pipeline_set_mode (GESPipeline * pipeline, GESPipelineFlags mode)
  * the image is used. You can retrieve these caps from the returned sample
  * with gst_sample_get_caps().
  *
- * Returns: (transfer full): A sample of @self's current image preview in
+ * Returns: (transfer full) (nullable): A sample of @self's current image preview in
  * the format given by @caps, or %NULL if an error prevented fetching the
  * sample.
  */
@@ -1329,8 +1358,7 @@ ges_pipeline_get_thumbnail (GESPipeline * self, GstCaps * caps)
  * native size
  * @format: The desired mime type (for example, "image/jpeg")
  * @location: The path to save the thumbnail to
- * @error: (out) (allow-none) (transfer full): An error to be set in case
- * something goes wrong, or %NULL to ignore
+ * @error: An error to be set in case something goes wrong, or %NULL to ignore
  *
  * Saves the currently displayed image of the pipeline in preview to the
  * given location, in the specified dimensions and format.
@@ -1395,7 +1423,7 @@ ges_pipeline_save_thumbnail (GESPipeline * self, int width, int
  *
  * See ges_pipeline_get_thumbnail().
  *
- * Returns: (transfer full): A sample of @self's current image preview in
+ * Returns: (transfer full) (nullable): A sample of @self's current image preview in
  * the "RGB" format, scaled to @width and @height, or %NULL if an error
  * prevented fetching the sample.
  */
@@ -1429,7 +1457,7 @@ ges_pipeline_get_thumbnail_rgb24 (GESPipeline * self, gint width, gint height)
  *
  * Gets the #GESPipeline:video-sink of the pipeline.
  *
- * Returns: (transfer full): The video sink used by @self for preview.
+ * Returns: (transfer full) (nullable): The video sink used by @self for preview.
  */
 GstElement *
 ges_pipeline_preview_get_video_sink (GESPipeline * self)
@@ -1447,7 +1475,7 @@ ges_pipeline_preview_get_video_sink (GESPipeline * self)
 /**
  * ges_pipeline_preview_set_video_sink:
  * @self: A #GESPipeline in #GST_STATE_NULL
- * @sink: (transfer none): A video sink for @self to use for preview
+ * @sink: (transfer none) (nullable): A video sink for @self to use for preview
  *
  * Sets the #GESPipeline:video-sink of the pipeline.
  */
@@ -1466,7 +1494,7 @@ ges_pipeline_preview_set_video_sink (GESPipeline * self, GstElement * sink)
  *
  * Gets the #GESPipeline:audio-sink of the pipeline.
  *
- * Returns: (transfer full): The audio sink used by @self for preview.
+ * Returns: (transfer full) (nullable): The audio sink used by @self for preview.
  */
 GstElement *
 ges_pipeline_preview_get_audio_sink (GESPipeline * self)
@@ -1484,7 +1512,7 @@ ges_pipeline_preview_get_audio_sink (GESPipeline * self)
 /**
  * ges_pipeline_preview_set_audio_sink:
  * @self: A #GESPipeline in #GST_STATE_NULL
- * @sink: (transfer none): A audio sink for @self to use for preview
+ * @sink: (transfer none) (nullable): A audio sink for @self to use for preview
  *
  * Sets the #GESPipeline:audio-sink of the pipeline.
  */

@@ -106,6 +106,11 @@ GstDebugCategory * _ges_debug (void);
       ges_timeline_element_peak_toplevel (GES_TIMELINE_ELEMENT (element)), \
       GES_TIMELINE_ELEMENT_SET_SIMPLE)
 
+/************************
+ * Our property masks   *
+ ************************/
+#define GES_PARAM_NO_SERIALIZATION (1 << (G_PARAM_USER_SHIFT + 1))
+
 #define SUPRESS_UNUSED_WARNING(a) (void)a
 
 G_GNUC_INTERNAL void
@@ -182,6 +187,12 @@ ges_timeline_set_smart_rendering (GESTimeline * timeline, gboolean rendering_sma
 
 G_GNUC_INTERNAL gboolean
 ges_timeline_get_smart_rendering (GESTimeline *timeline);
+
+G_GNUC_INTERNAL GstStreamCollection*
+ges_timeline_get_stream_collection (GESTimeline *timeline);
+
+G_GNUC_INTERNAL gboolean
+ges_timeline_in_current_thread (GESTimeline *timeline);
 
 G_GNUC_INTERNAL void
 ges_auto_transition_set_source (GESAutoTransition * self, GESTrackElement * source, GESEdge edge);
@@ -361,7 +372,8 @@ G_GNUC_INTERNAL void ges_base_xml_formatter_add_track_element   (GESBaseXmlForma
 G_GNUC_INTERNAL void ges_base_xml_formatter_add_source          (GESBaseXmlFormatter *self,
                                                                  const gchar * track_id,
                                                                  GstStructure *children_properties,
-                                                                 GstStructure *properties);
+                                                                 GstStructure *properties,
+                                                                 const gchar *metadatas);
 
 G_GNUC_INTERNAL void ges_base_xml_formatter_add_group           (GESBaseXmlFormatter *self,
                                                                  const gchar *name,
@@ -411,11 +423,15 @@ ges_get_compositor_factory                                (void);
 
 G_GNUC_INTERNAL void
 ges_idle_add (GSourceFunc func, gpointer udata, GDestroyNotify notify);
+G_GNUC_INTERNAL void
+ges_timeout_add (guint interval, GSourceFunc func, gpointer udata, GDestroyNotify notify);
 
 G_GNUC_INTERNAL gboolean
 ges_util_structure_get_clocktime (GstStructure *structure, const gchar *name,
                                   GstClockTime *val, GESFrameNumber *frames);
 
+G_GNUC_INTERNAL gboolean /* From ges-xml-formatter.c */
+ges_util_can_serialize_spec (GParamSpec * spec);
 
 /****************************************************
  *              GESContainer                        *
@@ -446,6 +462,7 @@ G_GNUC_INTERNAL void              ges_clip_set_add_error          (GESClip * cli
 G_GNUC_INTERNAL void              ges_clip_take_add_error         (GESClip * clip, GError ** error);
 G_GNUC_INTERNAL void              ges_clip_set_remove_error       (GESClip * clip, GError * error);
 G_GNUC_INTERNAL void              ges_clip_take_remove_error      (GESClip * clip, GError ** error);
+G_GNUC_INTERNAL gboolean          ges_clip_has_scale_effect       (GESClip * clip);
 
 /****************************************************
  *              GESLayer                            *
@@ -489,10 +506,11 @@ ges_source_get_rendering_smartly                      (GESSource *source);
 
 G_GNUC_INTERNAL void ges_track_set_smart_rendering     (GESTrack* track, gboolean rendering_smartly);
 G_GNUC_INTERNAL GstElement * ges_track_get_composition (GESTrack *track);
+G_GNUC_INTERNAL void ges_track_select_subtimeline_streams (GESTrack *track, GstStreamCollection *collection, GstElement *subtimeline);
 
 
 /*********************************************
- *  GESTrackElement subclasses contructores  *
+ *  GESTrackElement subclasses constructors  *
  ********************************************/
 G_GNUC_INTERNAL GESAudioTestSource * ges_audio_test_source_new (void);
 G_GNUC_INTERNAL GESAudioUriSource  * ges_audio_uri_source_new  (gchar *uri);
@@ -578,18 +596,21 @@ G_GNUC_INTERNAL gboolean ges_test_clip_asset_get_natural_size (GESAsset *self,
 G_GNUC_INTERNAL gchar *ges_test_source_asset_check_id         (GType type, const gchar *id,
                                                                GError **error);
 
-/************************
- * Our property masks   *
- ************************/
-#define GES_PARAM_NO_SERIALIZATION (1 << (G_PARAM_USER_SHIFT + 1))
-
 /*******************************
- * GESMarkerList serialization *
+ *        GESMarkerList        *
  *******************************/
 
-
+G_GNUC_INTERNAL GESMarker * ges_marker_list_get_closest (GESMarkerList *list, GstClockTime position);
 G_GNUC_INTERNAL gchar * ges_marker_list_serialize (const GValue * v);
 G_GNUC_INTERNAL gboolean ges_marker_list_deserialize (GValue *dest, const gchar *s);
+
+/*******************************
+ *       GESDiscovererManager   *
+ *******************************/
+G_GNUC_INTERNAL void ges_discoverer_manager_cleanup                  (void);
+G_GNUC_INTERNAL gboolean ges_discoverer_manager_start_discovery      (GESDiscovererManager *self,
+                                                                      const gchar *uri);
+G_GNUC_INTERNAL void ges_discoverer_manager_recreate_discoverer      (GESDiscovererManager *self);
 
 /********************
  *  Gnonlin helpers *

@@ -115,6 +115,10 @@
  * transition object will be kept, but with its timing and layer adjusted
  * accordingly.
  *
+ * NOTE: if you know what you are doing and want to be in full control of the
+ * timeline layout, you can disable the edit APIs with
+ * #ges_timeline_disable_edit_apis.
+ *
  * ## Saving
  *
  * To save/load a timeline, you can use the ges_timeline_load_from_uri()
@@ -225,6 +229,8 @@ struct _GESTimelinePrivate
   /* For ges_timeline_commit_sync */
   GMutex commited_lock;
   GCond commited_cond;
+  gboolean commit_frozen;
+  gboolean commit_delayed;
 
   GThread *valid_thread;
   gboolean disposed;
@@ -232,6 +238,7 @@ struct _GESTimelinePrivate
   GstStreamCollection *stream_collection;
 
   gboolean rendering_smartly;
+  gboolean disable_edit_apis;
 };
 
 /* private structure to contain our track-related information */
@@ -440,12 +447,13 @@ ges_timeline_handle_message (GstBin * bin, GstMessage * message)
 
   if (GST_MESSAGE_TYPE (message) == GST_MESSAGE_ASYNC_START) {
     GST_INFO_OBJECT (timeline, "Dropping %" GST_PTR_FORMAT, message);
+    gst_message_unref (message);
     return;
   }
 
   if (GST_MESSAGE_TYPE (message) == GST_MESSAGE_ASYNC_DONE) {
     GST_INFO_OBJECT (timeline, "Dropping %" GST_PTR_FORMAT, message);
-
+    gst_message_unref (message);
     return;
   }
 
@@ -493,17 +501,29 @@ ges_timeline_handle_message (GstBin * bin, GstMessage * message)
             gst_structure_get_string (mstructure, "reason"));
       }
       GST_OBJECT_UNLOCK (timeline);
+    } else {
+      goto forward;
     }
 
+    gst_message_unref (message);
     if (amessage) {
-      gst_message_unref (message);
       gst_element_post_message (GST_ELEMENT_CAST (bin), amessage);
-      return;
     }
+    return;
   }
 
 forward:
-  gst_element_post_message (GST_ELEMENT_CAST (bin), message);
+  GST_BIN_CLASS (parent_class)->handle_message (bin, message);
+}
+
+static void
+ges_timeline_post_stream_collection (GESTimeline * timeline)
+{
+  gst_element_post_message ((GstElement *) timeline,
+      gst_message_new_element ((GstObject *) timeline,
+          gst_structure_new ("ges-timeline-collection", "collection",
+              GST_TYPE_STREAM_COLLECTION, timeline->priv->stream_collection,
+              NULL)));
 }
 
 static GstStateChangeReturn
@@ -516,9 +536,7 @@ ges_timeline_change_state (GstElement * element, GstStateChange transition)
       transition);
 
   if (transition == GST_STATE_CHANGE_READY_TO_PAUSED)
-    gst_element_post_message ((GstElement *) timeline,
-        gst_message_new_stream_collection ((GstObject *) timeline,
-            timeline->priv->stream_collection));
+    ges_timeline_post_stream_collection (timeline);
   return res;
 }
 
@@ -855,7 +873,7 @@ ges_timeline_class_init (GESTimelineClass * klass)
    * Simplified version of #GESTimeline::select-tracks-for-object which only
    * allows @track_element to be added to a single #GESTrack.
    *
-   * Returns: (transfer full): A track to put @track_element into, or %NULL if
+   * Returns: (transfer full) (nullable): A track to put @track_element into, or %NULL if
    * it should be discarded.
    *
    * Since: 1.18
@@ -1649,7 +1667,7 @@ clip_track_element_added_cb (GESClip * clip,
 
   if (auto_trans_track) {
     /* don't use track-selection */
-    success = ! !ges_clip_add_child_to_track (clip, track_element,
+    success = !!ges_clip_add_child_to_track (clip, track_element,
         auto_trans_track, &error);
     gst_object_unref (auto_trans_track);
   } else {
@@ -2152,6 +2170,18 @@ ges_timeline_get_smart_rendering (GESTimeline * timeline)
   return timeline->priv->rendering_smartly;
 }
 
+GstStreamCollection *
+ges_timeline_get_stream_collection (GESTimeline * timeline)
+{
+  return gst_object_ref (timeline->priv->stream_collection);
+}
+
+gboolean
+ges_timeline_in_current_thread (GESTimeline * timeline)
+{
+  return timeline->priv->valid_thread == g_thread_self ();
+}
+
 /**** API *****/
 /**
  * ges_timeline_new:
@@ -2176,12 +2206,12 @@ ges_timeline_new (void)
 /**
  * ges_timeline_new_from_uri:
  * @uri: The URI to load from
- * @error: (out) (allow-none): An error to be set if loading fails, or
+ * @error: An error to be set if loading fails, or
  * %NULL to ignore
  *
  * Creates a timeline from the given URI.
  *
- * Returns: (transfer floating) (nullable): A new timeline if the uri was loaded
+ * Returns: (transfer floating): A new timeline if the uri was loaded
  * successfully, or %NULL if the uri could not be loaded.
  */
 GESTimeline *
@@ -2200,7 +2230,7 @@ ges_timeline_new_from_uri (const gchar * uri, GError ** error)
  * ges_timeline_load_from_uri:
  * @timeline: An empty #GESTimeline into which to load the formatter
  * @uri: The URI to load from
- * @error: (out) (allow-none): An error to be set if loading fails, or
+ * @error: An error to be set if loading fails, or
  * %NULL to ignore
  *
  * Loads the contents of URI into the timeline.
@@ -2231,7 +2261,7 @@ ges_timeline_load_from_uri (GESTimeline * timeline, const gchar * uri,
  * @uri: The location to save to
  * @formatter_asset: (allow-none): The formatter asset to use, or %NULL
  * @overwrite: %TRUE to overwrite file if it exists
- * @error: (out) (allow-none): An error to be set if saving fails, or
+ * @error: An error to be set if saving fails, or
  * %NULL to ignore
  *
  * Saves the timeline to the given location. If @formatter_asset is %NULL,
@@ -2466,7 +2496,7 @@ ges_timeline_remove_layer (GESTimeline * timeline, GESLayer * layer)
 /**
  * ges_timeline_add_track:
  * @timeline: The #GESTimeline
- * @track: (transfer full): The track to add
+ * @track: (transfer floating): The track to add
  *
  * Add a track to the timeline.
  *
@@ -2496,13 +2526,15 @@ ges_timeline_add_track (GESTimeline * timeline, GESTrack * track)
   g_return_val_if_fail (GES_IS_TRACK (track), FALSE);
   CHECK_THREAD (timeline);
 
-  GST_DEBUG ("timeline:%p, track:%p", timeline, track);
+  GST_DEBUG_OBJECT (timeline, "Adding %" GST_PTR_FORMAT, track);
 
   /* make sure we don't already control it */
   LOCK_DYN (timeline);
   if (G_UNLIKELY (g_list_find (timeline->tracks, (gconstpointer) track))) {
     UNLOCK_DYN (timeline);
     GST_WARNING ("Track is already controlled by this timeline");
+    gst_object_ref_sink (track);
+    gst_object_unref (track);
     return FALSE;
   }
 
@@ -2784,6 +2816,12 @@ ges_timeline_commit_unlocked (GESTimeline * timeline)
   GList *tmp;
   gboolean res = TRUE;
 
+  if (timeline->priv->commit_frozen) {
+    GST_DEBUG_OBJECT (timeline, "commit locked");
+    timeline->priv->commit_delayed = TRUE;
+    return res;
+  }
+
   GST_DEBUG_OBJECT (timeline, "commiting changes");
 
   timeline_tree_create_transitions (timeline->priv->tree,
@@ -2866,9 +2904,7 @@ ges_timeline_commit (GESTimeline * timeline)
   UNLOCK_DYN (timeline);
 
   if (pcollection != timeline->priv->stream_collection) {
-    gst_element_post_message ((GstElement *) timeline,
-        gst_message_new_stream_collection ((GstObject *) timeline,
-            timeline->priv->stream_collection));
+    ges_timeline_post_stream_collection (timeline);
   }
 
   ges_timeline_emit_snapping (timeline, NULL, NULL, GST_CLOCK_TIME_NONE);
@@ -2933,6 +2969,51 @@ ges_timeline_commit_sync (GESTimeline * timeline)
 }
 
 /**
+ * ges_timeline_freeze_commit:
+ * @timeline: The #GESTimeline
+ *
+ * Freezes the timeline from being committed. This is usually needed while the
+ * timeline is being rendered to ensure that not change to the timeline are
+ * taken into account during that moment. Once the rendering is done, you
+ * should call #ges_timeline_thaw_commit so that committing becomes possible
+ * again and any call to `commit()` that happened during the rendering is
+ * actually taken into account.
+ *
+ * Since: 1.20
+ *
+ */
+void
+ges_timeline_freeze_commit (GESTimeline * timeline)
+{
+  LOCK_DYN (timeline);
+  timeline->priv->commit_frozen = TRUE;
+  UNLOCK_DYN (timeline);
+}
+
+/**
+ * ges_timeline_thaw_commit:
+ * @timeline: The #GESTimeline
+ *
+ * Thaw the timeline so that comiting becomes possible
+ * again and any call to `commit()` that happened during the rendering is
+ * actually taken into account.
+ *
+ * Since: 1.20
+ *
+ */
+void
+ges_timeline_thaw_commit (GESTimeline * timeline)
+{
+  LOCK_DYN (timeline);
+  timeline->priv->commit_frozen = FALSE;
+  UNLOCK_DYN (timeline);
+  if (timeline->priv->commit_delayed) {
+    ges_timeline_commit (timeline);
+    timeline->priv->commit_delayed = FALSE;
+  }
+}
+
+/**
  * ges_timeline_get_duration:
  * @timeline: The #GESTimeline
  *
@@ -2985,6 +3066,7 @@ ges_timeline_set_auto_transition (GESTimeline * timeline,
   GESLayer *layer;
 
   g_return_if_fail (GES_IS_TIMELINE (timeline));
+  g_return_if_fail (!timeline->priv->disable_edit_apis);
   CHECK_THREAD (timeline);
 
   timeline->priv->auto_transition = auto_transition;
@@ -3029,6 +3111,7 @@ ges_timeline_set_snapping_distance (GESTimeline * timeline,
     GstClockTime snapping_distance)
 {
   g_return_if_fail (GES_IS_TIMELINE (timeline));
+  g_return_if_fail (GST_CLOCK_TIME_IS_VALID (snapping_distance));
   CHECK_THREAD (timeline);
 
   timeline->priv->snapping_distance = snapping_distance;
@@ -3199,6 +3282,7 @@ ges_timeline_paste_element (GESTimeline * timeline,
 
   g_return_val_if_fail (GES_IS_TIMELINE (timeline), FALSE);
   g_return_val_if_fail (GES_IS_TIMELINE_ELEMENT (element), FALSE);
+  g_return_val_if_fail (GST_CLOCK_TIME_IS_VALID (position), FALSE);
   CHECK_THREAD (timeline);
 
   element_class = GES_TIMELINE_ELEMENT_GET_CLASS (element);
@@ -3331,4 +3415,65 @@ ges_timeline_get_frame_at (GESTimeline * self, GstClockTime timestamp)
   timeline_get_framerate (self, &fps_n, &fps_d);
 
   return gst_util_uint64_scale (timestamp, fps_n, fps_d * GST_SECOND);
+}
+
+/**
+ * ges_timeline_disable_edit_apis:
+ * @self: A #GESTimeline
+ * @disable_edit_apis: %TRUE to disable all the edit APIs so the user is in full
+ * control of ensuring timeline state validity %FALSE otherwise.
+ *
+ * WARNING: When using that mode, GES won't guarantee the coherence of the
+ * timeline. You need to ensure that the rules described in the [Overlaps and
+ * auto transitions](#overlaps-and-autotransitions) section are respected any time
+ * the timeline is [commited](ges_timeline_commit) (otherwise playback will most
+ * probably fail in different ways).
+ *
+ * When disabling editing APIs, GES won't be able to enforce the rules that
+ * makes the timeline overall state to be valid but some feature won't be
+ * usable:
+ *   * #GESTimeline:snapping-distance
+ *   * #GESTimeline:auto-transition
+ *
+ * Since: 1.22
+ */
+void
+ges_timeline_disable_edit_apis (GESTimeline * self, gboolean disable_edit_apis)
+{
+  CHECK_THREAD (self);
+  g_return_if_fail (GES_IS_TIMELINE (self));
+
+  if (disable_edit_apis) {
+    if (self->priv->snapping_distance > 0) {
+      GST_INFO_OBJECT (self,
+          "Disabling snapping as we are disabling edit APIs");
+
+      ges_timeline_set_snapping_distance (self, 0);
+    }
+
+    if (self->priv->auto_transition || self->priv->auto_transitions) {
+      GST_INFO_OBJECT (self,
+          "Disabling auto transitions as we are disabling auto edit APIs");
+      ges_timeline_set_auto_transition (self, FALSE);
+    }
+  }
+
+  self->priv->disable_edit_apis = disable_edit_apis;
+}
+
+/**
+ * ges_timeline_get_edit_apis_disabled:
+ * @self: A #GESTimeline
+ *
+ * Returns: %TRUE if edit APIs are disabled, %FALSE otherwise.
+ *
+ * Since: 1.22
+ */
+gboolean
+ges_timeline_get_edit_apis_disabled (GESTimeline * self)
+{
+  CHECK_THREAD (self);
+  g_return_val_if_fail (GES_IS_TIMELINE (self), FALSE);
+
+  return self->priv->disable_edit_apis;
 }

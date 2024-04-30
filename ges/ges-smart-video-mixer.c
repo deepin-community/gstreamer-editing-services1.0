@@ -20,7 +20,9 @@
 #include "config.h"
 #endif
 
+#include <math.h>
 #include "gstframepositioner.h"
+#include "ges-frame-composition-meta.h"
 #include "ges-types.h"
 #include "ges-internal.h"
 #include "ges-smart-video-mixer.h"
@@ -37,6 +39,11 @@ struct _GESSmartMixerPad
 
   gdouble alpha;
   GstSegment segment;
+
+  GParamSpec *width_pspec;
+  GParamSpec *height_pspec;
+  GParamSpec *xpos_pspec;
+  GParamSpec *ypos_pspec;
 };
 
 struct _GESSmartMixerPadClass
@@ -51,6 +58,18 @@ enum
 };
 
 G_DEFINE_TYPE (GESSmartMixerPad, ges_smart_mixer_pad, GST_TYPE_GHOST_PAD);
+
+static void
+ges_smart_mixer_notify_wrapped_pad (GESSmartMixerPad * self,
+    GstPad * real_mixer_pad)
+{
+  GObjectClass *klass = G_OBJECT_GET_CLASS (real_mixer_pad);
+
+  self->width_pspec = g_object_class_find_property (klass, "width");
+  self->height_pspec = g_object_class_find_property (klass, "height");
+  self->xpos_pspec = g_object_class_find_property (klass, "xpos");
+  self->ypos_pspec = g_object_class_find_property (klass, "ypos");
+}
 
 static void
 ges_smart_mixer_pad_get_property (GObject * object, guint prop_id,
@@ -129,6 +148,7 @@ typedef struct _PadInfos
   GESSmartMixer *self;
   GstPad *mixer_pad;
   GstPad *ghostpad;
+  GstPad *real_mixer_pad;
 } PadInfos;
 
 static void
@@ -140,6 +160,7 @@ pad_infos_unref (PadInfos * infos)
       gst_element_release_request_pad (infos->self->mixer, infos->mixer_pad);
       gst_object_unref (infos->mixer_pad);
     }
+    gst_clear_object (&infos->real_mixer_pad);
 
     g_free (infos);
   }
@@ -190,7 +211,7 @@ ges_smart_mixer_get_mixer_pad (GESSmartMixer * self, GstPad ** mixerpad)
   PadInfos *info;
   GstPad *sinkpad;
 
-  sinkpad = gst_element_get_request_pad (GST_ELEMENT (self), "sink_%u");
+  sinkpad = gst_element_request_pad_simple (GST_ELEMENT (self), "sink_%u");
 
   if (sinkpad == NULL)
     return NULL;
@@ -202,19 +223,19 @@ ges_smart_mixer_get_mixer_pad (GESSmartMixer * self, GstPad ** mixerpad)
 }
 
 static void
-set_pad_properties_from_positioner_meta (GstPad * mixer_pad, GstSample * sample,
-    GESSmartMixerPad * ghost)
+set_pad_properties_from_composition_meta (GstPad * mixer_pad,
+    GstSample * sample, GESSmartMixerPad * ghost)
 {
-  GstFramePositionerMeta *meta;
+  GESFrameCompositionMeta *meta;
   GstBuffer *buf = gst_sample_get_buffer (sample);
   GESSmartMixer *self = GES_SMART_MIXER (GST_OBJECT_PARENT (ghost));
 
   meta =
-      (GstFramePositionerMeta *) gst_buffer_get_meta (buf,
-      gst_frame_positioner_meta_api_get_type ());
+      (GESFrameCompositionMeta *) gst_buffer_get_meta (buf,
+      GES_TYPE_META_FRAME_COMPOSITION);
 
   if (!meta) {
-    GST_WARNING ("The current source should use a framepositioner");
+    GST_WARNING ("The current source should use a framecomposition");
     return;
   }
 
@@ -237,8 +258,38 @@ set_pad_properties_from_positioner_meta (GstPad * mixer_pad, GstSample * sample,
     g_object_set (mixer_pad, "alpha", meta->alpha * transalpha, NULL);
   }
 
-  g_object_set (mixer_pad, "xpos", meta->posx, "ypos",
-      meta->posy, "width", meta->width, "height", meta->height, NULL);
+  if (G_PARAM_SPEC_VALUE_TYPE (ghost->xpos_pspec) == G_TYPE_INT) {
+    g_object_set (mixer_pad, "xpos", (gint) round (meta->posx), "ypos",
+        (gint) round (meta->posy), NULL);
+  } else if (G_PARAM_SPEC_VALUE_TYPE (ghost->xpos_pspec) == G_TYPE_FLOAT) {
+    g_object_set (mixer_pad, "xpos", (gfloat) meta->posx, "ypos",
+        (gfloat) meta->posy, NULL);
+  } else {
+    g_object_set (mixer_pad, "xpos", meta->posx, "ypos", meta->posy, NULL);
+  }
+
+  if (meta->width >= 0) {
+    if (G_PARAM_SPEC_VALUE_TYPE (ghost->width_pspec) == G_TYPE_INT) {
+      g_object_set (mixer_pad, "width", (gint) round (meta->width), NULL);
+    } else if (G_PARAM_SPEC_VALUE_TYPE (ghost->width_pspec) == G_TYPE_FLOAT) {
+      g_object_set (mixer_pad, "width", (gfloat) meta->width, NULL);
+    } else {
+      g_object_set (mixer_pad, "width", meta->width, NULL);
+    }
+  }
+
+  if (meta->height >= 0) {
+    if (G_PARAM_SPEC_VALUE_TYPE (ghost->height_pspec) == G_TYPE_INT) {
+      g_object_set (mixer_pad, "height", (gint) round (meta->height), NULL);
+    } else if (G_PARAM_SPEC_VALUE_TYPE (ghost->height_pspec) == G_TYPE_FLOAT) {
+      g_object_set (mixer_pad, "height", (gfloat) meta->height, NULL);
+    } else {
+      g_object_set (mixer_pad, "height", meta->height, NULL);
+    }
+  }
+
+  if (self->ABI.abi.has_operator)
+    g_object_set (mixer_pad, "operator", meta->operator, NULL);
 }
 
 /****************************************************
@@ -251,6 +302,7 @@ _request_new_pad (GstElement * element, GstPadTemplate * templ,
   PadInfos *infos = pad_infos_new ();
   GESSmartMixer *self = GES_SMART_MIXER (element);
   GstPad *ghost;
+  gchar *mixer_pad_name;
 
   infos->mixer_pad = gst_element_request_pad (self->mixer,
       gst_element_class_get_pad_template (GST_ELEMENT_GET_CLASS (self->mixer),
@@ -263,12 +315,27 @@ _request_new_pad (GstElement * element, GstPadTemplate * templ,
     return NULL;
   }
 
+  /* We can rely on this because the mixer bin uses the same name pad
+     as the internal mixer when creating the ghost pad. */
+  mixer_pad_name = gst_pad_get_name (infos->mixer_pad);
+  infos->real_mixer_pad = gst_element_get_static_pad (self->real_mixer,
+      mixer_pad_name);
+  g_free (mixer_pad_name);
+  if (infos->real_mixer_pad == NULL) {
+    GST_WARNING_OBJECT (element, "Could not get the real mixer pad");
+    pad_infos_unref (infos);
+
+    return NULL;
+  }
+
   infos->self = self;
 
   ghost = g_object_new (ges_smart_mixer_pad_get_type (), "name", name,
       "direction", GST_PAD_DIRECTION (infos->mixer_pad), NULL);
   infos->ghostpad = ghost;
   gst_ghost_pad_set_target (GST_GHOST_PAD_CAST (ghost), infos->mixer_pad);
+  ges_smart_mixer_notify_wrapped_pad (GES_SMART_MIXER_PAD (ghost),
+      infos->real_mixer_pad);
   gst_pad_set_active (ghost, TRUE);
   if (!gst_element_add_pad (GST_ELEMENT (self), ghost))
     goto could_not_add;
@@ -279,6 +346,8 @@ _request_new_pad (GstElement * element, GstPadTemplate * templ,
   LOCK (self);
   g_hash_table_insert (self->pads_infos, ghost, infos);
   g_hash_table_insert (self->pads_infos, infos->mixer_pad,
+      pad_infos_ref (infos));
+  g_hash_table_insert (self->pads_infos, infos->real_mixer_pad,
       pad_infos_ref (infos));
   UNLOCK (self);
 
@@ -320,6 +389,8 @@ _release_pad (GstElement * element, GstPad * pad)
   LOCK (element);
   g_hash_table_remove (GES_SMART_MIXER (element)->pads_infos, pad);
   g_hash_table_remove (GES_SMART_MIXER (element)->pads_infos, info->mixer_pad);
+  g_hash_table_remove (GES_SMART_MIXER (element)->pads_infos,
+      info->real_mixer_pad);
   peer = gst_pad_get_peer (pad);
   if (peer) {
     gst_pad_unlink (peer, pad);
@@ -350,7 +421,7 @@ compositor_sync_properties_with_meta (GstElement * compositor,
       GST_AGGREGATOR_PAD (sinkpad));
 
   if (sample) {
-    set_pad_properties_from_positioner_meta (sinkpad,
+    set_pad_properties_from_composition_meta (sinkpad,
         sample, GES_SMART_MIXER_PAD (info->ghostpad));
     gst_sample_unref (sample);
   } else {
@@ -382,6 +453,7 @@ ges_smart_mixer_dispose (GObject * object)
     g_hash_table_unref (self->pads_infos);
     self->pads_infos = NULL;
   }
+  gst_clear_object (&self->real_mixer);
 
   G_OBJECT_CLASS (ges_smart_mixer_parent_class)->dispose (object);
 }
@@ -401,15 +473,24 @@ ges_smart_mixer_constructed (GObject * obj)
 {
   GstPad *pad;
   GstElement *identity, *videoconvert;
-
   GESSmartMixer *self = GES_SMART_MIXER (obj);
   gchar *cname = g_strdup_printf ("%s-compositor", GST_OBJECT_NAME (self));
 
   self->mixer =
       gst_element_factory_create (ges_get_compositor_factory (), cname);
+  self->ABI.abi.has_operator =
+      gst_compositor_operator_get_type_and_default_value (NULL) != G_TYPE_NONE;
   g_free (cname);
-  g_object_set (self->mixer, "background", 1, "emit-signals", TRUE, NULL);
-  g_signal_connect (self->mixer, "samples-selected",
+
+  if (GST_IS_BIN (self->mixer)) {
+    g_object_get (self->mixer, "mixer", &self->real_mixer, NULL);
+    g_assert (self->real_mixer);
+  } else {
+    self->real_mixer = gst_object_ref (self->mixer);
+  }
+
+  g_object_set (self->real_mixer, "background", 1, "emit-signals", TRUE, NULL);
+  g_signal_connect (self->real_mixer, "samples-selected",
       G_CALLBACK (ges_smart_mixer_samples_selected_cb), self);
 
   /* See https://gitlab.freedesktop.org/gstreamer/gstreamer/issues/310 */
