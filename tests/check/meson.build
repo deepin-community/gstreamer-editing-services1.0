@@ -25,12 +25,20 @@ ges_tests = [
     ['nle/tempochange']
 ]
 
+# Make sure our headers are C++ clean
+if add_languages('cpp', native: false, required: false)
+  ges_tests += [
+    [ 'gescpp.cc', false ],
+  ]
+endif
+
+fsmod = import('fs')
 test_defines = [
   '-UG_DISABLE_ASSERT',
   '-UG_DISABLE_CAST_CHECKS',
-  '-DGES_TEST_FILES_PATH="@0@"'.format(join_paths(meson.current_source_dir(), 'assets')),
+  '-DGES_TEST_FILES_PATH="@0@"'.format(fsmod.as_posix(join_paths(meson.current_source_dir(), 'assets'))),
   '-DGST_CHECK_TEST_ENVIRONMENT_BEACON="GST_STATE_IGNORE_ELEMENTS"',
-  '-DTESTFILE="' + meson.current_source_dir() + '/meson.build"',
+  '-DTESTFILE="' + fsmod.as_posix(meson.current_source_dir()) + '/meson.build"',
   '-DGST_USE_UNSTABLE_API',
 ]
 
@@ -39,17 +47,21 @@ if gst_dep.type_name() == 'pkgconfig'
   pbase = dependency('gstreamer-plugins-base-' + apiversion, required : false)
   pbad = dependency('gstreamer-plugins-bad-' + apiversion, required : false)
 
-  pluginsdirs = [gst_dep.get_pkgconfig_variable('pluginsdir'),
-                 pbase.get_pkgconfig_variable('pluginsdir'),
-                 pbad.get_pkgconfig_variable('pluginsdir')]
- gst_plugin_scanner_dir = gst_dep.get_pkgconfig_variable('pluginscannerdir')
+  pluginsdirs = [gst_dep.get_variable('pluginsdir'),
+                 pbase.get_variable('pluginsdir'),
+                 pbad.get_variable('pluginsdir')]
+ gst_plugin_scanner_dir = gst_dep.get_variable('pluginscannerdir')
 else
  gst_plugin_scanner_dir = subproject('gstreamer').get_variable('gst_scanner_dir')
 endif
 gst_plugin_scanner_path = join_paths(gst_plugin_scanner_dir, 'gst-plugin-scanner')
 
 foreach t : ges_tests
-  fname = '@0@.c'.format(t.get(0))
+  if t.get(0).endswith('.cc')
+    fname = t.get(0)
+  else
+    fname = '@0@.c'.format(t.get(0))
+  endif
   test_name = t.get(0).underscorify()
   if t.length() == 2
     skip_test = t.get(1)
@@ -63,7 +75,7 @@ foreach t : ges_tests
     env.set('GST_STATE_IGNORE_ELEMENTS', '')
     env.set('CK_DEFAULT_TIMEOUT', '20')
     env.set('GST_REGISTRY', '@0@/@1@.registry'.format(meson.current_build_dir(), test_name))
-    env.set('GST_PLUGIN_PATH_1_0', [meson.build_root()] + pluginsdirs)
+    env.set('GST_PLUGIN_PATH_1_0', [meson.global_build_root()] + pluginsdirs)
 
     exe = executable(test_name, fname,
         'ges/test-utils.c', 'nle/common.c',
@@ -75,7 +87,7 @@ foreach t : ges_tests
   endif
 endforeach
 
-if gstvalidate_dep.found()
+if gstvalidate_dep.found() and not get_option('tools').disabled()
   # filename: is .validatetest
   scenarios = {
     'check_video_track_restriction_scale': false,
@@ -88,6 +100,8 @@ if gstvalidate_dep.found()
     'edit_while_seeked_with_stop': true,
     'complex_effect_bin_desc': true,
     'check_keyframes_in_compositor_two_sources': true,
+    'check-clip-positioning': true,
+    'set-layer-on-command-line': true,
   }
 
   foreach scenario, is_validatetest: scenarios
@@ -97,20 +111,20 @@ if gstvalidate_dep.found()
     env.set('GST_STATE_IGNORE_ELEMENTS', '')
     env.set('CK_DEFAULT_TIMEOUT', '20')
     env.set('GST_REGISTRY', '@0@/@1@.registry'.format(meson.current_build_dir(), 'scenarios'))
-    env.set('GST_PLUGIN_PATH_1_0', [meson.build_root()] + pluginsdirs)
+    env.set('GST_PLUGIN_PATH_1_0', [meson.global_build_root()] + pluginsdirs)
     env.set('GST_VALIDATE_LOGSDIR', meson.current_build_dir() / scenario)
     env.set('GST_PLUGIN_SCANNER_1_0', gst_plugin_scanner_path)
 
     if is_validatetest
       testfile = meson.current_source_dir() / 'scenarios' / scenario + '.validatetest'
-      test(scenario, ges_launch, env: env, args: ['--set-test-file', testfile, '--mute'])
+      test(scenario, ges_launch, env: env, args: ['--no-interactive', '--set-test-file', testfile, '--mute'])
     else
       scenario_file = meson.current_source_dir() / 'scenarios' / scenario + '.scenario'
-      test(scenario, ges_launch, env: env, args: ['--set-scenario', scenario_file])
+      test(scenario, ges_launch, env: env, args: ['--no-interactive', '--set-scenario', scenario_file])
     endif
 
   endforeach
-  test('simple_playback_test', ges_launch, env: env, args: ['+test-clip', 'blue', 'd=0.1', '--disable-validate', '--videosink=fakevideosink', '--audiosink=fakesink'])
+  test('simple_playback_test', ges_launch, env: env, args: ['+test-clip', 'blue', 'd=0.1', '--videosink=fakevideosink', '--audiosink=fakeaudiosink'])
 endif
 
 if build_gir
@@ -127,7 +141,7 @@ if build_gir
     env.set('GST_STATE_IGNORE_ELEMENTS', '')
     env.set('CK_DEFAULT_TIMEOUT', '20')
     env.set('GST_REGISTRY', '@0@/@1@.registry'.format(meson.current_build_dir(), 'scenarios'))
-    env.set('GST_PLUGIN_PATH_1_0', [meson.build_root()] + pluginsdirs)
+    env.set('GST_PLUGIN_PATH_1_0', [meson.global_build_root()] + pluginsdirs)
     env.set('GI_TYPELIB_PATH', meson.current_build_dir() / '..' / '..' / 'ges')
 
     test('pythontests', runtests, args: ['--pyunittest-dir', meson.current_source_dir(), 'pyunittest', '--dump-on-failure'],

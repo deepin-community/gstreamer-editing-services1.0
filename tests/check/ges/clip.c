@@ -475,6 +475,7 @@ GST_START_TEST (test_split_object)
       *splittrackelement;
   guint32 priority1, priority2, effect_priority1, effect_priority2;
   guint selection_called = 0;
+  const gchar *meta;
 
   ges_init ();
 
@@ -502,6 +503,9 @@ GST_START_TEST (test_split_object)
   fail_unless (trackelement1 != NULL);
   fail_unless (GES_TIMELINE_ELEMENT_PARENT (trackelement1) ==
       GES_TIMELINE_ELEMENT (clip));
+  ges_meta_container_set_string (GES_META_CONTAINER (trackelement1), "test_key",
+      "test_value");
+
   trackelement2 = GES_CONTAINER_CHILDREN (clip)->next->data;
   fail_unless (trackelement2 != NULL);
   fail_unless (GES_TIMELINE_ELEMENT_PARENT (trackelement2) ==
@@ -610,12 +614,15 @@ GST_START_TEST (test_split_object)
 
   /* core elements have swapped order in the clip, this is ok since they
    * share the same priority */
-  assert_equal_children_properties (splittrackelement, trackelement2);
-  fail_unless (ges_track_element_get_track (splittrackelement) == track2);
-  fail_unless (ges_track_element_get_track (trackelement2) == track2);
+  assert_equal_children_properties (splittrackelement, trackelement1);
+  fail_unless (ges_track_element_get_track (splittrackelement) == track1);
+  fail_unless (ges_track_element_get_track (trackelement1) == track1);
   assert_equals_int (GES_TIMELINE_ELEMENT_PRIORITY (splittrackelement),
-      priority2 + 3);
-  fail_unless (GES_TIMELINE_ELEMENT_PRIORITY (trackelement2) == priority2);
+      priority1 + 3);
+  fail_unless (GES_TIMELINE_ELEMENT_PRIORITY (trackelement1) == priority1);
+  meta = ges_meta_container_get_string (GES_META_CONTAINER (splittrackelement),
+      "test_key");
+  fail_unless_equals_string (meta, "test_value");
 
   fail_unless (splittrackelement != trackelement1);
   fail_unless (splittrackelement != trackelement2);
@@ -627,12 +634,12 @@ GST_START_TEST (test_split_object)
   fail_unless (GES_IS_TRACK_ELEMENT (splittrackelement));
   CHECK_OBJECT_PROPS (splittrackelement, 67, 37, 25);
 
-  assert_equal_children_properties (splittrackelement, trackelement1);
-  fail_unless (ges_track_element_get_track (splittrackelement) == track1);
-  fail_unless (ges_track_element_get_track (trackelement1) == track1);
+  assert_equal_children_properties (splittrackelement, trackelement2);
+  fail_unless (ges_track_element_get_track (splittrackelement) == track2);
+  fail_unless (ges_track_element_get_track (trackelement2) == track2);
   assert_equals_int (GES_TIMELINE_ELEMENT_PRIORITY (splittrackelement),
-      priority1 + 3);
-  fail_unless (GES_TIMELINE_ELEMENT_PRIORITY (trackelement1) == priority2);
+      priority2 + 3);
+  fail_unless (GES_TIMELINE_ELEMENT_PRIORITY (trackelement2) == priority2);
 
   fail_unless (splittrackelement != trackelement1);
   fail_unless (splittrackelement != trackelement2);
@@ -2058,18 +2065,24 @@ GST_START_TEST (test_can_add_effect)
   uri = ges_test_get_audio_video_uri ();
 
   clips[0] = (struct CanAddEffectData) {
-  GES_CLIP (ges_test_clip_new ()), TRUE};
+    GES_CLIP (ges_test_clip_new ()), TRUE
+  };
   clips[1] = (struct CanAddEffectData) {
-  GES_CLIP (ges_uri_clip_new (uri)), TRUE};
+    GES_CLIP (ges_uri_clip_new (uri)), TRUE
+  };
   clips[2] = (struct CanAddEffectData) {
-  GES_CLIP (ges_title_clip_new ()), TRUE};
+    GES_CLIP (ges_title_clip_new ()), TRUE
+  };
   clips[3] = (struct CanAddEffectData) {
-  GES_CLIP (ges_effect_clip_new ("agingtv", "audioecho")), TRUE};
+    GES_CLIP (ges_effect_clip_new ("agingtv", "audioecho")), TRUE
+  };
   clips[4] = (struct CanAddEffectData) {
-  GES_CLIP (ges_transition_clip_new
-        (GES_VIDEO_STANDARD_TRANSITION_TYPE_CROSSFADE)), FALSE};
+    GES_CLIP (ges_transition_clip_new
+        (GES_VIDEO_STANDARD_TRANSITION_TYPE_CROSSFADE)), FALSE
+  };
   clips[5] = (struct CanAddEffectData) {
-  GES_CLIP (ges_text_overlay_clip_new ()), FALSE};
+    GES_CLIP (ges_text_overlay_clip_new ()), FALSE
+  };
 
   g_free (uri);
 
@@ -2428,8 +2441,8 @@ GST_START_TEST (test_children_max_duration)
     GstClockTime max_duration;
   } clips[] = {
     {
-    NULL, GST_SECOND}, {
-    NULL, GST_CLOCK_TIME_NONE}
+        NULL, GST_SECOND}, {
+        NULL, GST_CLOCK_TIME_NONE}
   };
 
   ges_init ();

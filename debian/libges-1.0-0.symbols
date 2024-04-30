@@ -36,6 +36,7 @@ libges-1.0.so.0 libges-1.0-0 #MINVER#
  ges_base_effect_set_time_translation_funcs@Base 1.18.0
  ges_base_transition_clip_get_type@Base 1.2.0
  ges_base_xml_formatter_get_type@Base 1.2.0
+ ges_buffer_add_frame_composition_meta@Base 1.23.1
  ges_clip_add_asset@Base 1.2.0
  ges_clip_add_child_to_track@Base 1.18.0
  ges_clip_add_top_effect@Base 1.18.0
@@ -66,6 +67,7 @@ libges-1.0.so.0 libges-1.0-0 #MINVER#
  ges_clip_split@Base 1.2.0
  ges_clip_split_full@Base 1.18.0
  ges_command_line_formatter_get_help@Base 1.10.0
+ ges_command_line_formatter_get_timeline_uri@Base 1.20.0
  ges_command_line_formatter_get_type@Base 1.6.0
  ges_container_add@Base 1.2.0
  ges_container_edit@Base 1.2.0
@@ -75,6 +77,12 @@ libges-1.0.so.0 libges-1.0-0 #MINVER#
  ges_container_remove@Base 1.2.0
  ges_container_ungroup@Base 1.2.0
  ges_deinit@Base 1.12.0
+ ges_discoverer_manager_get_default@Base 1.23.1
+ ges_discoverer_manager_get_timeout@Base 1.23.1
+ ges_discoverer_manager_get_type@Base 1.23.1
+ ges_discoverer_manager_get_use_cache@Base 1.23.1
+ ges_discoverer_manager_set_timeout@Base 1.23.1
+ ges_discoverer_manager_set_use_cache@Base 1.23.1
  ges_edge_get_type@Base 1.2.0
  ges_edge_name@Base 1.15.90
  ges_edit_mode_get_type@Base 1.2.0
@@ -97,6 +105,7 @@ libges-1.0.so.0 libges-1.0-0 #MINVER#
  ges_formatter_get_type@Base 1.2.0
  ges_formatter_load_from_uri@Base 1.2.0
  ges_formatter_save_to_uri@Base 1.2.0
+ ges_frame_composition_meta_api_get_type@Base 1.23.1
  ges_group_get_type@Base 1.2.0
  ges_group_new@Base 1.2.0
  ges_image_source_get_type@Base 1.2.0
@@ -124,6 +133,7 @@ libges-1.0.so.0 libges-1.0-0 #MINVER#
  ges_layer_set_priority@Base 1.2.0
  ges_layer_set_timeline@Base 1.2.0
  ges_list_assets@Base 1.2.0
+ ges_marker_flags_get_type@Base 1.20.0
  ges_marker_get_type@Base 1.18.0
  ges_marker_list_add@Base 1.18.0
  ges_marker_list_get_markers@Base 1.18.0
@@ -270,6 +280,7 @@ libges-1.0.so.0 libges-1.0-0 #MINVER#
  ges_timeline_append_layer@Base 1.2.0
  ges_timeline_commit@Base 1.2.0
  ges_timeline_commit_sync@Base 1.6.0
+ ges_timeline_disable_edit_apis@Base 1.22.0
  ges_timeline_element_add_child_property@Base 1.6.0
  ges_timeline_element_copy@Base 1.2.0
  ges_timeline_element_edit@Base 1.18.0
@@ -313,8 +324,10 @@ libges-1.0.so.0 libges-1.0-0 #MINVER#
  ges_timeline_element_set_start@Base 1.2.0
  ges_timeline_element_set_timeline@Base 1.2.0
  ges_timeline_element_trim@Base 1.2.0
+ ges_timeline_freeze_commit@Base 1.20.0
  ges_timeline_get_auto_transition@Base 1.2.0
  ges_timeline_get_duration@Base 1.2.0
+ ges_timeline_get_edit_apis_disabled@Base 1.22.0
  ges_timeline_get_element@Base 1.4.0
  ges_timeline_get_frame_at@Base 1.18.0
  ges_timeline_get_frame_time@Base 1.18.0
@@ -338,6 +351,7 @@ libges-1.0.so.0 libges-1.0-0 #MINVER#
  ges_timeline_save_to_uri@Base 1.2.0
  ges_timeline_set_auto_transition@Base 1.2.0
  ges_timeline_set_snapping_distance@Base 1.2.0
+ ges_timeline_thaw_commit@Base 1.20.0
  ges_title_clip_get_background_color@Base 1.18.0
  ges_title_clip_get_font_desc@Base 1.18.0
  ges_title_clip_get_halignment@Base 1.18.0
@@ -455,6 +469,7 @@ libges-1.0.so.0 libges-1.0-0 #MINVER#
  ges_uri_source_asset_is_image@Base 1.18.0
  ges_validate_register_action_types@Base 1.6.0
  ges_version@Base 1.2.0
+ ges_video_scale_get_type@Base 1.23.1
  ges_video_source_get_natural_size@Base 1.18.0
  ges_video_source_get_type@Base 1.2.0
  ges_video_standard_transition_type_get_type@Base 1.2.0

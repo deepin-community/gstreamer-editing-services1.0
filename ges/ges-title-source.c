@@ -68,7 +68,7 @@ static void ges_title_source_get_property (GObject * object, guint
 static void ges_title_source_set_property (GObject * object, guint
     property_id, const GValue * value, GParamSpec * pspec);
 
-static GstElement *ges_title_source_create_source (GESTrackElement * self);
+static GstElement *ges_title_source_create_source (GESSource * self);
 
 static gboolean
 _lookup_child (GESTimelineElement * object,
@@ -98,7 +98,8 @@ static void
 ges_title_source_class_init (GESTitleSourceClass * klass)
 {
   GObjectClass *object_class = G_OBJECT_CLASS (klass);
-  GESVideoSourceClass *source_class = GES_VIDEO_SOURCE_CLASS (klass);
+  GESSourceClass *source_class = GES_SOURCE_CLASS (klass);
+  GESVideoSourceClass *vsource_class = GES_VIDEO_SOURCE_CLASS (klass);
   GESTimelineElementClass *timeline_element_class =
       GES_TIMELINE_ELEMENT_CLASS (klass);
 
@@ -107,7 +108,7 @@ ges_title_source_class_init (GESTitleSourceClass * klass)
   object_class->dispose = ges_title_source_dispose;
 
   timeline_element_class->lookup_child = _lookup_child;
-  source_class->ABI.abi.disable_scale_in_compositor = TRUE;
+  vsource_class->ABI.abi.disable_scale_in_compositor = TRUE;
   source_class->create_source = ges_title_source_create_source;
 
   GES_TRACK_ELEMENT_CLASS_DEFAULT_HAS_INTERNAL_SOURCE (klass) = FALSE;
@@ -176,17 +177,17 @@ ges_title_source_set_property (GObject * object,
 }
 
 static GstElement *
-ges_title_source_create_source (GESTrackElement * object)
+ges_title_source_create_source (GESSource * source)
 {
   GstElement *topbin, *background, *text;
   GstPad *src, *pad;
 
-  GESTitleSource *self = GES_TITLE_SOURCE (object);
+  GESTitleSource *self = GES_TITLE_SOURCE (source);
   GESTitleSourcePrivate *priv = self->priv;
   const gchar *bg_props[] = { "pattern", "foreground-color", NULL };
   const gchar *text_props[] = { "text", "font-desc", "valignment", "halignment",
     "color", "xpos", "ypos", "x-absolute", "y-absolute", "outline-color",
-    "shaded-background",
+    "shaded-background", "draw-shadow",
     "text-x", "text-y", "text-width", "text-height", NULL
   };
 
@@ -228,9 +229,10 @@ ges_title_source_create_source (GESTrackElement * object)
   priv->text_el = text;
   priv->background_el = background;
 
-  ges_track_element_add_children_props (object, text, NULL, NULL, text_props);
-  ges_track_element_add_children_props (object, background, NULL, NULL,
-      bg_props);
+  ges_track_element_add_children_props (GES_TRACK_ELEMENT (source), text, NULL,
+      NULL, text_props);
+  ges_track_element_add_children_props (GES_TRACK_ELEMENT (source), background,
+      NULL, NULL, bg_props);
 
   return topbin;
 }
@@ -238,7 +240,7 @@ ges_title_source_create_source (GESTrackElement * object)
 /**
  * ges_title_source_set_text:
  * @self: the #GESTitleSource* to set text on
- * @text: the text to render. an internal copy of this text will be
+ * @text: (nullable): the text to render. an internal copy of this text will be
  * made.
  *
  * Sets the text this track element will render.
@@ -263,7 +265,7 @@ ges_title_source_set_text (GESTitleSource * self, const gchar * text)
 /**
  * ges_title_source_set_font_desc:
  * @self: the #GESTitleSource
- * @font_desc: the pango font description
+ * @font_desc: (nullable): the pango font description
  *
  * Set the pango font description this source will use to render
  * the text.
@@ -390,7 +392,7 @@ ges_title_source_set_ypos (GESTitleSource * self, gdouble position)
  *
  * Get the text currently set on the @source.
  *
- * Returns: (transfer full): The text currently set on the @source.
+ * Returns: (transfer full) (nullable): The text currently set on the @source.
  *
  * Deprecated: 1.16: Use ges_timeline_element_get_child_property instead
  * (this actually returns a newly allocated string)
@@ -412,7 +414,7 @@ ges_title_source_get_text (GESTitleSource * source)
  *
  * Get the pango font description used by @source.
  *
- * Returns: (transfer full): The pango font description used by this
+ * Returns: (transfer full) (nullable): The pango font description used by this
  * @source.
  *
  * Deprecated: 1.16: Use ges_timeline_element_get_child_property instead

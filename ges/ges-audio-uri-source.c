@@ -48,7 +48,7 @@ enum
 
 /* GESSource VMethod */
 static GstElement *
-ges_audio_uri_source_create_source (GESTrackElement * element)
+ges_audio_uri_source_create_source (GESSource * element)
 {
   return ges_uri_source_create_source (GES_AUDIO_URI_SOURCE (element)->priv);
 }
@@ -136,7 +136,7 @@ ges_audio_uri_source_class_init (GESAudioUriSourceClass * klass)
 {
   GObjectClass *object_class = G_OBJECT_CLASS (klass);
   GESTimelineElementClass *element_class = GES_TIMELINE_ELEMENT_CLASS (klass);
-  GESAudioSourceClass *source_class = GES_AUDIO_SOURCE_CLASS (klass);
+  GESSourceClass *src_class = GES_SOURCE_CLASS (klass);
 
   object_class->get_property = ges_audio_uri_source_get_property;
   object_class->set_property = ges_audio_uri_source_set_property;
@@ -153,7 +153,8 @@ ges_audio_uri_source_class_init (GESAudioUriSourceClass * klass)
 
   element_class->get_natural_framerate = _get_natural_framerate;
 
-  source_class->create_source = ges_audio_uri_source_create_source;
+  src_class->select_pad = ges_uri_source_select_pad;
+  src_class->create_source = ges_audio_uri_source_create_source;
 }
 
 static void

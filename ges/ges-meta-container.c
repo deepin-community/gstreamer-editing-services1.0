@@ -110,19 +110,19 @@ _free_meta_container_data (ContainerData * data)
   gst_structure_free (data->structure);
   g_hash_table_unref (data->static_items);
 
-  g_slice_free (ContainerData, data);
+  g_free (data);
 }
 
 static void
 _free_static_item (RegisteredMeta * item)
 {
-  g_slice_free (RegisteredMeta, item);
+  g_free (item);
 }
 
 static ContainerData *
 _create_container_data (GESMetaContainer * container)
 {
-  ContainerData *data = g_slice_new (ContainerData);
+  ContainerData *data = g_new (ContainerData, 1);
   data->structure = gst_structure_new_empty ("metadatas");
   data->static_items = g_hash_table_new_full (g_str_hash, g_str_equal,
       g_free, (GDestroyNotify) (GDestroyNotify) _free_static_item);
@@ -216,7 +216,7 @@ _register_meta (GESMetaContainer * container, GESMetaFlag flags,
     return FALSE;
   }
 
-  static_item = g_slice_new0 (RegisteredMeta);
+  static_item = g_new0 (RegisteredMeta, 1);
   static_item->item_type = type;
   static_item->flags = flags;
   g_hash_table_insert (data->static_items, g_strdup (meta_item), static_item);
@@ -523,8 +523,7 @@ ges_meta_container_set_marker_list (GESMetaContainer * container,
  *
  * Serializes the set metadata fields of the meta container to a string.
  *
- * Returns: (transfer full): A serialized @container, or %NULL if an error
- * occurred.
+ * Returns: (transfer full): A serialized @container.
  */
 gchar *
 ges_meta_container_metas_to_string (GESMetaContainer * container)
@@ -874,9 +873,9 @@ ges_meta_container_register_meta (GESMetaContainer * container,
  * ges_meta_container_check_meta_registered:
  * @container: A #GESMetaContainer
  * @meta_item: The key for the @container field to check
- * @flags: (out) (nullable): A destination to get the registered flags of
+ * @flags: (out) (optional): A destination to get the registered flags of
  * the field, or %NULL to ignore
- * @type: (out) (nullable): A destination to get the registered type of
+ * @type: (out) (optional): A destination to get the registered type of
  * the field, or %NULL to ignore
  *
  * Checks whether the specified field has been registered as static, and
@@ -1115,7 +1114,7 @@ ges_meta_container_get_float (GESMetaContainer * container,
  * container. If the field does not have a set value, or it is of the
  * wrong type, the method will fail.
  *
- * Returns: (transfer none): The string value under @meta_item, or %NULL
+ * Returns: (transfer none) (nullable): The string value under @meta_item, or %NULL
  * if it could not be fetched.
  */
 const gchar *
@@ -1139,7 +1138,7 @@ ges_meta_container_get_string (GESMetaContainer * container,
  *
  * Gets the current value of the specified field of the meta container.
  *
- * Returns: (transfer none): The value under @key, or %NULL if @container
+ * Returns: (transfer none) (nullable): The value under @key, or %NULL if @container
  * does not have the field set.
  */
 const GValue *
@@ -1164,7 +1163,7 @@ ges_meta_container_get_meta (GESMetaContainer * container, const gchar * key)
  * container. If the field does not have a set value, or it is of the
  * wrong type, the method will fail.
  *
- * Returns: (transfer full): A copy of the marker list value under @key,
+ * Returns: (transfer full) (nullable): A copy of the marker list value under @key,
  * or %NULL if it could not be fetched.
  * Since: 1.18
  */
@@ -1193,7 +1192,7 @@ ges_meta_container_get_marker_list (GESMetaContainer * container,
  * ges_meta_container_get_date:
  * @container: A #GESMetaContainer
  * @meta_item: The key for the @container field to get
- * @dest: (out): Destination into which the value under @meta_item
+ * @dest: (out) (optional) (transfer full): Destination into which the value under @meta_item
  * should be copied.
  *
  * Gets the current date value of the specified field of the meta
@@ -1209,7 +1208,7 @@ CREATE_GETTER (date, GDate **);
  * ges_meta_container_get_date_time:
  * @container: A #GESMetaContainer
  * @meta_item: The key for the @container field to get
- * @dest: (out): Destination into which the value under @meta_item
+ * @dest: (out) (optional) (transfer full): Destination into which the value under @meta_item
  * should be copied.
  *
  * Gets the current date time value of the specified field of the meta

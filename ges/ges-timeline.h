@@ -126,6 +126,10 @@ GES_API
 gboolean ges_timeline_commit (GESTimeline * timeline);
 GES_API
 gboolean ges_timeline_commit_sync (GESTimeline * timeline);
+GES_API
+void ges_timeline_freeze_commit (GESTimeline * timeline);
+GES_API
+void ges_timeline_thaw_commit (GESTimeline * timeline);
 
 GES_API
 GstClockTime ges_timeline_get_duration (GESTimeline *timeline);
@@ -155,5 +159,10 @@ GstClockTime ges_timeline_get_frame_time(GESTimeline *self,
 GES_API
 GESFrameNumber ges_timeline_get_frame_at (GESTimeline *self,
                                           GstClockTime timestamp);
+
+GES_API
+void ges_timeline_disable_edit_apis (GESTimeline * self, gboolean disable_edit_apis);
+GES_API
+gboolean ges_timeline_get_edit_apis_disabled (GESTimeline * self);
 
 G_END_DECLS

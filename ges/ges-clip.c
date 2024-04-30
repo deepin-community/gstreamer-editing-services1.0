@@ -176,7 +176,7 @@
  *   children = ges_container_get_children (GES_CONTAINER (clip), FALSE);
  *
  *   for (tmp = children; tmp; tmp = tmp->next)
- *     ges_track_element_set_auto_clamp_control_source (tmp->data, FALSE);
+ *     ges_track_element_set_auto_clamp_control_sources (tmp->data, FALSE);
  *
  *   // add time effect, or set their children properties, or move them around
  *   ...
@@ -197,7 +197,7 @@
  *     // handle error
  *
  *   for (tmp = children; tmp; tmp = tmp->next)
- *     ges_track_element_set_auto_clamp_control_source (tmp->data, TRUE);
+ *     ges_track_element_set_auto_clamp_control_sources (tmp->data, TRUE);
  *
  *   g_list_free_full (children, gst_object_unref);
  *   gst_object_unref (source);
@@ -250,6 +250,7 @@ struct _GESClipPrivate
 
   gboolean allow_any_remove;
 
+  gint nb_scale_effects;
   gboolean use_effect_priority;
   guint32 effect_priority;
   GError *add_error;
@@ -1638,6 +1639,7 @@ _add_child (GESContainer * container, GESTimelineElement * element)
   GESTimeline *timeline = GES_TIMELINE_ELEMENT_TIMELINE (container);
   GESClipPrivate *priv = self->priv;
   GESAsset *asset, *creator_asset;
+  gboolean adding_scale_effect = FALSE;
   gboolean prev_prevent = priv->prevent_duration_limit_update;
   gboolean prev_prevent_outpoint = priv->prevent_children_outpoint_update;
   GList *tmp;
@@ -1775,6 +1777,14 @@ _add_child (GESContainer * container, GESTimelineElement * element)
           new_prio = MAX (new_prio, _PRIORITY (tmp->data) + 1);
       }
     }
+
+    if (GES_IS_EFFECT (element)) {
+      GESAsset *asset = ges_extractable_get_asset (GES_EXTRACTABLE (element));
+      const gchar *bindesc = ges_asset_get_id (asset);
+
+      adding_scale_effect = !strstr (bindesc, "gesvideoscale");
+    }
+
     /* make sure higher than core */
     for (tmp = container->children; tmp; tmp = tmp->next) {
       if (_IS_CORE_CHILD (tmp->data))
@@ -1817,8 +1827,15 @@ _add_child (GESContainer * container, GESTimelineElement * element)
     _update_active_for_track (self, track_el);
 
     priv->nb_effects++;
+
     GST_DEBUG_OBJECT (self, "Adding %ith effect: %" GES_FORMAT
         " Priority %i", priv->nb_effects, GES_ARGS (element), new_prio);
+
+    if (adding_scale_effect) {
+      GST_DEBUG_OBJECT (self, "Adding scaling effect to clip "
+          "%" GES_FORMAT, GES_ARGS (self));
+      priv->nb_scale_effects += 1;
+    }
 
     /* changing priorities, and updating their offset */
     priv->prevent_resort = TRUE;
@@ -1900,6 +1917,12 @@ ges_clip_set_remove_error (GESClip * clip, GError * error)
   priv->remove_error = error;
 }
 
+gboolean
+ges_clip_has_scale_effect (GESClip * clip)
+{
+  return clip->priv->nb_scale_effects > 0;
+}
+
 static gboolean
 _remove_child (GESContainer * container, GESTimelineElement * element)
 {
@@ -1961,6 +1984,17 @@ _remove_child (GESContainer * container, GESTimelineElement * element)
      * relative priorities */
     /* height may have changed */
     _compute_height (container);
+
+    if (GES_IS_EFFECT (element)) {
+      GESAsset *asset = ges_extractable_get_asset (GES_EXTRACTABLE (element));
+      const gchar *bindesc = ges_asset_get_id (asset);
+
+      if (bindesc && !strstr (bindesc, "gesvideoscale")) {
+        GST_DEBUG_OBJECT (self, "Removing scaling effect to clip "
+            "%" GES_FORMAT, GES_ARGS (self));
+        priv->nb_scale_effects -= 1;
+      }
+    }
   }
   /* duration-limit updated in _child_removed */
   return TRUE;
@@ -2008,7 +2042,7 @@ _child_removed (GESContainer * container, GESTimelineElement * element)
 static void
 add_clip_to_list (gpointer key, gpointer clip, GList ** list)
 {
-  *list = g_list_prepend (*list, gst_object_ref (clip));
+  *list = g_list_append (*list, gst_object_ref (clip));
 }
 
 /* NOTE: Since this does not change the track of @child, this should
@@ -3000,7 +3034,8 @@ _cmp_children_by_priority (gconstpointer a_p, gconstpointer b_p)
  * ges_clip_add_top_effect:
  * @clip: A #GESClip
  * @effect: A top effect to add
- * @index: The index to add @effect at, or -1 to add at the highest
+ * @index: The index to add @effect at, or -1 to add at the highest,
+ *         see #ges_clip_get_top_effect_index for more information
  * @error: (nullable): Return location for an error
  *
  * Add a top effect to a clip at the given index.
@@ -3342,7 +3377,7 @@ ges_clip_set_top_effect_index (GESClip * clip, GESBaseEffect * effect,
  * @clip: The #GESClip to split
  * @position: The timeline position at which to perform the split, between
  * the start and end of the clip
- * @error: (nullable): Return location for an error
+ * @error: Return location for an error
  *
  * Splits a clip at the given timeline position into two clips. The clip
  * must already have a #GESClip:layer.
@@ -3374,6 +3409,7 @@ ges_clip_set_top_effect_index (GESClip * clip, GESBaseEffect * effect,
  *
  * Returns: (transfer none) (nullable): The newly created clip resulting
  * from the splitting @clip, or %NULL if @clip can't be split.
+ *
  * Since: 1.18
  */
 GESClip *
@@ -3480,6 +3516,7 @@ ges_clip_split_full (GESClip * clip, guint64 position, GError ** error)
     GESTrackElement *copy, *orig = tmp->data;
     GESTrack *track = ges_track_element_get_track (orig);
     GESAutoTransition *trans;
+    gchar *meta;
 
     copy = ges_clip_copy_track_element_into (new_object, orig, new_inpoint);
 
@@ -3489,6 +3526,10 @@ ges_clip_split_full (GESClip * clip, guint64 position, GError ** error)
     if (track)
       g_hash_table_insert (track_for_copy, gst_object_ref (copy),
           gst_object_ref (track));
+
+    meta = ges_meta_container_metas_to_string (GES_META_CONTAINER (orig));
+    ges_meta_container_add_metas_from_string (GES_META_CONTAINER (copy), meta);
+    g_free (meta);
 
     trans = timeline ?
         ges_timeline_get_auto_transition_at_edge (timeline, orig,
@@ -3599,7 +3640,7 @@ ges_clip_get_supported_formats (GESClip * clip)
  * clip, but this method is not intended to be used to create the core
  * elements of the clip.
  *
- * Returns: (transfer none)(allow-none): The newly created element, or
+ * Returns: (transfer none) (nullable): The newly created element, or
  * %NULL if an error occurred.
  */
 /* FIXME: this is not used elsewhere in the GES library */
@@ -4396,7 +4437,7 @@ ges_clip_get_timeline_time_from_source_frame (GESClip * clip,
  * @clip: A #GESClip
  * @child: A child of @clip
  * @track: The track to add @child to
- * @error: (nullable): Return location for an error
+ * @error: Return location for an error
  *
  * Adds the track element child of the clip to a specific track.
  *

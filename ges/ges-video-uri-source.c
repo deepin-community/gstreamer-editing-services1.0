@@ -51,7 +51,7 @@ enum
 
 /* GESSource VMethod */
 static GstElement *
-ges_video_uri_source_create_source (GESTrackElement * element)
+ges_video_uri_source_create_source (GESSource * element)
 {
   return ges_uri_source_create_source (GES_VIDEO_URI_SOURCE (element)->priv);
 }
@@ -108,6 +108,7 @@ ges_video_uri_source_get_natural_size (GESVideoSource * source, gint * width,
   const GstTagList *tags = NULL;
   gchar *rotation_info = NULL;
   gint videoflip_method, rotate_angle;
+  guint par_n, par_d;
   GstDiscovererVideoInfo *info =
       _get_video_stream_info (GES_VIDEO_URI_SOURCE (source));
 
@@ -116,6 +117,21 @@ ges_video_uri_source_get_natural_size (GESVideoSource * source, gint * width,
 
   *width = gst_discoverer_video_info_get_width (info);
   *height = gst_discoverer_video_info_get_height (info);
+
+  /* account for source video PAR being not 1/1 */
+  par_n = gst_discoverer_video_info_get_par_num (info);
+  par_d = gst_discoverer_video_info_get_par_denom (info);
+
+  if (par_n > 0 && par_d > 0) {
+    if (*height % par_n == 0) {
+      *height = gst_util_uint64_scale_int (*height, par_d, par_n);
+    } else if (*width % par_d == 0) {
+      *height = gst_util_uint64_scale_int (*width, par_n, par_d);
+    } else {
+      *width = gst_util_uint64_scale_int (*height, par_d, par_n);
+    }
+  }
+
   if (!ges_timeline_element_lookup_child (GES_TIMELINE_ELEMENT (source),
           "GstVideoFlip::video-direction", NULL, NULL))
     goto done;
@@ -151,11 +167,14 @@ done:
   return TRUE;
 
 rotate:
-  GST_INFO_OBJECT (source, "Stream is rotated, taking that into account");
-  *width =
-      gst_discoverer_video_info_get_height (GST_DISCOVERER_VIDEO_INFO (info));
-  *height =
-      gst_discoverer_video_info_get_width (GST_DISCOVERER_VIDEO_INFO (info));
+  {
+    gint tmp;
+
+    GST_INFO_OBJECT (source, "Stream is rotated, taking that into account");
+    tmp = *width;
+    *width = *height;
+    *height = tmp;
+  }
 
   goto done;
 }
@@ -297,7 +316,8 @@ static void
 ges_video_uri_source_class_init (GESVideoUriSourceClass * klass)
 {
   GObjectClass *object_class = G_OBJECT_CLASS (klass);
-  GESVideoSourceClass *source_class = GES_VIDEO_SOURCE_CLASS (klass);
+  GESSourceClass *src_class = GES_SOURCE_CLASS (klass);
+  GESVideoSourceClass *video_src_class = GES_VIDEO_SOURCE_CLASS (klass);
 
   object_class->get_property = ges_video_uri_source_get_property;
   object_class->set_property = ges_video_uri_source_set_property;
@@ -312,12 +332,14 @@ ges_video_uri_source_class_init (GESVideoUriSourceClass * klass)
       g_param_spec_string ("uri", "URI", "uri of the resource",
           NULL, G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY));
 
-  source_class->create_source = ges_video_uri_source_create_source;
-  source_class->ABI.abi.needs_converters =
+  src_class->select_pad = ges_uri_source_select_pad;
+
+  src_class->create_source = ges_video_uri_source_create_source;
+  video_src_class->ABI.abi.needs_converters =
       ges_video_uri_source_needs_converters;
-  source_class->ABI.abi.get_natural_size =
+  video_src_class->ABI.abi.get_natural_size =
       ges_video_uri_source_get_natural_size;
-  source_class->ABI.abi.create_filters = ges_video_uri_source_create_filters;
+  video_src_class->ABI.abi.create_filters = ges_video_uri_source_create_filters;
 }
 
 static void

@@ -2,18 +2,20 @@
  * Copyright (C) <2013> Thibault Saunier <thibault.saunier@collabora.com>
  *               <2013> Collabora Ltd.
  *
- * gst-editing-services is free software: you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the
- * Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Library General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
  *
- * gst-editing-services is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See the GNU General Public License for more details.
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Library General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License along
- * with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU Library General Public
+ * License along with this library; if not, write to the
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
@@ -293,10 +295,10 @@ _get_property (GObject * object, guint property_id,
 
   switch (property_id) {
     case PROP_PARENT:
-      g_value_take_object (value, self->parent);
+      g_value_set_object (value, self->parent);
       break;
     case PROP_TIMELINE:
-      g_value_take_object (value, self->timeline);
+      g_value_set_object (value, self->timeline);
       break;
     case PROP_START:
       g_value_set_uint64 (value, self->start);
@@ -399,7 +401,7 @@ _child_prop_handler_free (ChildPropHandler * handler)
   if (handler->child != (GObject *) handler->self &&
       handler->child != (GObject *) handler->owner)
     gst_object_unref (handler->child);
-  g_slice_free (ChildPropHandler, handler);
+  g_free (handler);
 }
 
 static gboolean
@@ -761,7 +763,7 @@ emit_deep_notify_in_idle (EmitDeepNotifyInIdleData * data)
   gst_object_unref (data->child);
   g_param_spec_unref (data->arg);
   gst_object_unref (data->self);
-  g_slice_free (EmitDeepNotifyInIdleData, data);
+  g_free (data);
 
   return FALSE;
 }
@@ -780,7 +782,7 @@ child_prop_changed_cb (GObject * child, GParamSpec * arg,
     return;
   }
 
-  data = g_slice_new (EmitDeepNotifyInIdleData);
+  data = g_new (EmitDeepNotifyInIdleData, 1);
 
   data->child = gst_object_ref (child);
   data->arg = g_param_spec_ref (arg);
@@ -843,7 +845,7 @@ ges_timeline_element_add_child_property_full (GESTimelineElement * self,
       child, pspec->name);
 
   signame = g_strconcat ("notify::", pspec->name, NULL);
-  handler = (ChildPropHandler *) g_slice_new0 (ChildPropHandler);
+  handler = (ChildPropHandler *) g_new0 (ChildPropHandler, 1);
   handler->self = self;
   if (child == G_OBJECT (self) || child == G_OBJECT (owner))
     handler->child = child;
@@ -1082,6 +1084,7 @@ ges_timeline_element_set_start (GESTimelineElement * self, GstClockTime start)
   GESTimelineElement *toplevel_container, *parent;
 
   g_return_val_if_fail (GES_IS_TIMELINE_ELEMENT (self), FALSE);
+  g_return_val_if_fail (GST_CLOCK_TIME_IS_VALID (start), FALSE);
 
   if (self->start == start)
     return TRUE;
@@ -1437,6 +1440,7 @@ ges_timeline_element_ripple (GESTimelineElement * self, GstClockTime start)
   GESTimelineElementClass *klass;
 
   g_return_val_if_fail (GES_IS_TIMELINE_ELEMENT (self), FALSE);
+  g_return_val_if_fail (GST_CLOCK_TIME_IS_VALID (start), FALSE);
 
   klass = GES_TIMELINE_ELEMENT_GET_CLASS (self);
 
@@ -1467,6 +1471,7 @@ ges_timeline_element_ripple_end (GESTimelineElement * self, GstClockTime end)
   GESTimelineElementClass *klass;
 
   g_return_val_if_fail (GES_IS_TIMELINE_ELEMENT (self), FALSE);
+  g_return_val_if_fail (GST_CLOCK_TIME_IS_VALID (end), FALSE);
 
   klass = GES_TIMELINE_ELEMENT_GET_CLASS (self);
 
@@ -1494,6 +1499,7 @@ ges_timeline_element_roll_start (GESTimelineElement * self, GstClockTime start)
   GESTimelineElementClass *klass;
 
   g_return_val_if_fail (GES_IS_TIMELINE_ELEMENT (self), FALSE);
+  g_return_val_if_fail (GST_CLOCK_TIME_IS_VALID (start), FALSE);
 
   klass = GES_TIMELINE_ELEMENT_GET_CLASS (self);
 
@@ -1521,6 +1527,7 @@ ges_timeline_element_roll_end (GESTimelineElement * self, GstClockTime end)
   GESTimelineElementClass *klass;
 
   g_return_val_if_fail (GES_IS_TIMELINE_ELEMENT (self), FALSE);
+  g_return_val_if_fail (GST_CLOCK_TIME_IS_VALID (end), FALSE);
 
   klass = GES_TIMELINE_ELEMENT_GET_CLASS (self);
 
@@ -1548,6 +1555,7 @@ ges_timeline_element_trim (GESTimelineElement * self, GstClockTime start)
   GESTimelineElementClass *klass;
 
   g_return_val_if_fail (GES_IS_TIMELINE_ELEMENT (self), FALSE);
+  g_return_val_if_fail (GST_CLOCK_TIME_IS_VALID (start), FALSE);
 
   klass = GES_TIMELINE_ELEMENT_GET_CLASS (self);
 
@@ -1577,8 +1585,7 @@ ges_timeline_element_trim (GESTimelineElement * self, GstClockTime start)
  * @self, but should be thought of as an intermediate object used for a
  * single paste operation.
  *
- * Returns: (transfer floating): The newly create element,
- * copied from @self.
+ * Returns: (transfer floating): The newly create element, copied from @self.
  */
 G_GNUC_BEGIN_IGNORE_DEPRECATIONS;       /* Start ignoring GParameter deprecation */
 GESTimelineElement *
@@ -1660,7 +1667,7 @@ ges_timeline_element_get_toplevel_parent (GESTimelineElement * self)
  *
  * Gets the #GESTimelineElement:name for the element.
  *
- * Returns: (transfer full): The name of @self.
+ * Returns: (transfer full) (nullable): The name of @self.
  */
 gchar *
 ges_timeline_element_get_name (GESTimelineElement * self)
@@ -1673,7 +1680,7 @@ ges_timeline_element_get_name (GESTimelineElement * self)
 /**
  * ges_timeline_element_set_name:
  * @self: A #GESTimelineElement
- * @name: (allow-none): The name @self should take
+ * @name: (nullable): The name @self should take
  *
  * Sets the #GESTimelineElement:name for the element. If %NULL is given
  * for @name, then the library will instead generate a new name based on
@@ -2307,6 +2314,7 @@ ges_timeline_element_paste (GESTimelineElement * self,
 {
   GESTimelineElement *res;
   g_return_val_if_fail (GES_IS_TIMELINE_ELEMENT (self), FALSE);
+  g_return_val_if_fail (GST_CLOCK_TIME_IS_VALID (paste_position), FALSE);
 
   if (!self->priv->copied_from) {
     GST_ERROR_OBJECT (self, "Is not being 'deeply' copied!");
@@ -2363,7 +2371,7 @@ ges_timeline_element_get_layer_priority (GESTimelineElement * self)
  * @edge: The edge of @self where the edit should occur
  * @position: The edit position: a new location for the edge of @self
  * (in nanoseconds) in the timeline coordinates
- * @error: (nullable): Return location for an error
+ * @error: Return location for an error
  *
  * Edits the element within its timeline by adjusting its
  * #GESTimelineElement:start, #GESTimelineElement:duration or

@@ -1,3 +1,167 @@
+gstreamer-editing-services1.0 (1.24.2-1) unstable; urgency=medium
+
+  * New upstream version 1.24.2
+
+ -- Marc Leeman <marc.leeman@gmail.com>  Wed, 10 Apr 2024 11:11:04 +0200
+
+gstreamer-editing-services1.0 (1.24.1-1) unstable; urgency=medium
+
+  * New upstream version 1.24.1
+
+ -- Marc Leeman <marc.leeman@gmail.com>  Fri, 22 Mar 2024 11:50:43 +0100
+
+gstreamer-editing-services1.0 (1.24.0-1) unstable; urgency=medium
+
+  * Revert "d/watch: pin master releases on 1.22.x"
+  * New upstream version 1.24.0
+  * d/patches: refresh
+  * d/control: bump gstreamer dependencies to 1.24.0
+  * d/symbols: update with 1.23.1
+
+ -- Marc Leeman <marc.leeman@gmail.com>  Tue, 05 Mar 2024 16:17:57 +0100
+
+gstreamer-editing-services1.0 (1.22.10-1) unstable; urgency=medium
+
+  * d/watch: pin master releases on 1.22.x
+  * New upstream version 1.22.10
+  * d/control: pkg-config is transitional
+
+ -- Marc Leeman <marc.leeman@gmail.com>  Wed, 14 Feb 2024 14:57:31 +0100
+
+gstreamer-editing-services1.0 (1.22.9-1) unstable; urgency=medium
+
+  * New upstream version 1.22.9
+
+ -- Marc Leeman <marc.leeman@gmail.com>  Mon, 05 Feb 2024 14:54:58 +0100
+
+gstreamer-editing-services1.0 (1.22.8-1) unstable; urgency=medium
+
+  [ Jeremy Bícha ]
+  * Team upload
+  * New upstream release
+  * Revert pygi-overrides-dir workaround: no longer needed
+
+  [ Graham Inggs ]
+  * Add patch to ignore tests that have failed since glib 2.76
+    and are blocking the ongoing Python 3.12 transition
+    Mitigates: #1042341
+
+ -- Jeremy Bícha <jbicha@ubuntu.com>  Tue, 23 Jan 2024 14:03:16 -0500
+
+gstreamer-editing-services1.0 (1.22.4-1) unstable; urgency=medium
+
+  * Team upload
+  * New upstream release
+  * Explicitly set pygi-overrides-dir to work around meson behavior change
+
+ -- Jeremy Bícha <jbicha@ubuntu.com>  Wed, 28 Jun 2023 18:53:57 -0400
+
+gstreamer-editing-services1.0 (1.22.3-2) unstable; urgency=medium
+
+  * Team upload
+  * Release to unstable
+
+ -- Jeremy Bícha <jbicha@ubuntu.com>  Mon, 12 Jun 2023 14:47:28 -0400
+
+gstreamer-editing-services1.0 (1.22.3-1) experimental; urgency=medium
+
+  * Team upload
+  * New upstream release
+  * debian/rules: Enable all hardening flags
+
+ -- Jeremy Bícha <jbicha@ubuntu.com>  Sun, 21 May 2023 08:07:16 -0400
+
+gstreamer-editing-services1.0 (1.22.1-1) experimental; urgency=medium
+
+  * Team upload
+  * New upstream bugfix release (LP: #2015129)
+
+ -- Jeremy Bicha <jbicha@ubuntu.com>  Tue, 04 Apr 2023 10:28:33 -0400
+
+gstreamer-editing-services1.0 (1.22.0-2) unstable; urgency=medium
+
+  * Team upload
+  * Release to unstable
+
+ -- Jeremy Bicha <jbicha@ubuntu.com>  Sat, 28 Jan 2023 14:45:27 -0500
+
+gstreamer-editing-services1.0 (1.22.0-1) experimental; urgency=medium
+
+  * Team upload
+  * New upstream release
+  * Bump minimum gstreamer and meson
+  * debian/libges-1.0-0.symbols: Add new symbols
+  * debian/rules: Set -Dauto_features=enabled
+  * Set Rules-Requires-Root: no
+  * Bump Standards-Version to 4.6.2
+
+ -- Jeremy Bicha <jbicha@ubuntu.com>  Fri, 27 Jan 2023 15:22:21 -0500
+
+gstreamer-editing-services1.0 (1.20.5-1) unstable; urgency=medium
+
+  * Team upload
+  * New upstream release
+  * Add debian/upstream/signing-key.asc and update debian/watch to use it
+  * Drop patch applied in new release
+  * Update standards version to 4.6.1, no changes needed
+
+ -- Jeremy Bicha <jbicha@ubuntu.com>  Thu, 05 Jan 2023 15:48:36 -0500
+
+gstreamer-editing-services1.0 (1.20.3-1) unstable; urgency=medium
+
+  [ Sebastian Dröge ]
+  * New upstream bugfix release.
+  * debian/patches/2623.patch:
+    + Fix serious performance regression, see:
+      https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/2623
+
+  [ Jeremy Bicha ]
+  * Don't ignore build test failures on amd64 & arm64.
+  * Add debian/gbp.conf.
+
+ -- Sebastian Dröge <slomo@debian.org>  Tue, 21 Jun 2022 09:33:38 +0300
+
+gstreamer-editing-services1.0 (1.20.2-1) unstable; urgency=medium
+
+  * New upstream bugfix release.
+
+ -- Sebastian Dröge <slomo@debian.org>  Tue, 03 May 2022 10:13:34 +0300
+
+gstreamer-editing-services1.0 (1.20.1-2) unstable; urgency=medium
+
+  * debian/control:
+    + Let the -dev package depend on the gir1.2 package.
+
+ -- Sebastian Dröge <slomo@debian.org>  Wed, 16 Mar 2022 10:52:21 +0200
+
+gstreamer-editing-services1.0 (1.20.1-1) unstable; urgency=medium
+
+  * New upstream bugfix release.
+
+ -- Sebastian Dröge <slomo@debian.org>  Mon, 14 Mar 2022 17:49:14 +0200
+
+gstreamer-editing-services1.0 (1.20.0-2) unstable; urgency=medium
+
+  [ Laurent Bigonville ]
+  * Make libges-1.0-dev package depend on the proper version of
+    libpython-dev (Closes: #1005594).
+  * Also make libges-1.0-dev depend against libxml2-dev. This is listed in the
+    Requires.private dependencies of the pkg-config file.
+
+ -- Sebastian Dröge <slomo@debian.org>  Mon, 28 Feb 2022 12:40:20 +0200
+
+gstreamer-editing-services1.0 (1.20.0-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Sebastian Dröge <slomo@debian.org>  Fri, 04 Feb 2022 09:05:10 +0200
+
+gstreamer-editing-services1.0 (1.19.90-1) experimental; urgency=medium
+
+  * New upstream release candidate.
+
+ -- Sebastian Dröge <slomo@debian.org>  Fri, 28 Jan 2022 18:37:22 +0200
+
 gstreamer-editing-services1.0 (1.18.5-1) unstable; urgency=medium
 
   * New upstream bugfix release.

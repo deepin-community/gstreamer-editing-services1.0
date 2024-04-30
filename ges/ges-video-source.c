@@ -89,15 +89,37 @@ _set_priority (GESTimelineElement * element, guint32 priority)
   return res;
 }
 
+
+static gboolean
+_set_parent (GESTimelineElement * element, GESTimelineElement * parent)
+{
+  GESVideoSource *self = GES_VIDEO_SOURCE (element);
+
+  if (!parent)
+    return TRUE;
+
+  /* Some subclass might have different access to its natural size only
+   * once it knows its parent */
+  ges_video_source_get_natural_size (GES_VIDEO_SOURCE (self),
+      &self->priv->positioner->natural_width,
+      &self->priv->positioner->natural_height);
+
+  return TRUE;
+}
+
+
 static gboolean
 ges_video_source_create_filters (GESVideoSource * self, GPtrArray * elements,
     gboolean needs_converters)
 {
   GESTrackElement *trksrc = GES_TRACK_ELEMENT (self);
-  GstElement *positioner, *videoflip, *capsfilter;
+  GstElement *positioner, *videoflip, *capsfilter, *videorate;
   const gchar *positioner_props[]
-  = { "alpha", "posx", "posy", "width", "height", NULL };
+      = { "alpha", "posx", "fposx", "posy", "fposy", "width", "fwidth",
+    "height", "fheight", "operator", NULL
+  };
   const gchar *videoflip_props[] = { "video-direction", NULL };
+  gchar *ename = NULL;
 
   g_ptr_array_add (elements, gst_element_factory_make ("queue", NULL));
 
@@ -117,17 +139,28 @@ ges_video_source_create_filters (GESVideoSource * self, GPtrArray * elements,
   g_object_set (videoflip, "video-direction", GST_VIDEO_ORIENTATION_AUTO, NULL);
   g_ptr_array_add (elements, videoflip);
 
-  if (needs_converters) {
-    g_ptr_array_add (elements, gst_element_factory_make ("videoscale",
-            "track-element-videoscale"));
-    g_ptr_array_add (elements, gst_element_factory_make ("videoconvert",
-            "track-element-videoconvert"));
-  }
-  g_ptr_array_add (elements, gst_element_factory_make ("videorate",
-          "track-element-videorate"));
 
-  capsfilter =
-      gst_element_factory_make ("capsfilter", "track-element-capsfilter");
+  if (needs_converters) {
+    ename =
+        g_strdup_printf ("ges%s-videoscale", GES_TIMELINE_ELEMENT_NAME (self));
+    g_ptr_array_add (elements, gst_element_factory_make ("videoscale", ename));
+    g_free (ename);
+    ename = g_strdup_printf ("ges%s-convert", GES_TIMELINE_ELEMENT_NAME (self));
+    g_ptr_array_add (elements, gst_element_factory_make ("videoconvert",
+            ename));
+    g_free (ename);
+  }
+  ename = g_strdup_printf ("ges%s-rate", GES_TIMELINE_ELEMENT_NAME (self));
+  videorate = gst_element_factory_make ("videorate", ename);
+  g_object_set (videorate, "max-closing-segment-duplication-duration",
+      GST_CLOCK_TIME_NONE, NULL);
+  g_ptr_array_add (elements, videorate);
+
+  g_free (ename);
+  ename =
+      g_strdup_printf ("ges%s-capsfilter", GES_TIMELINE_ELEMENT_NAME (self));
+  capsfilter = gst_element_factory_make ("capsfilter", ename);
+  g_free (ename);
   g_ptr_array_add (elements, capsfilter);
 
   ges_frame_positioner_set_source_and_filter (GST_FRAME_POSITIONNER
@@ -155,7 +188,8 @@ ges_video_source_create_element (GESTrackElement * trksrc)
 {
   GstElement *topbin;
   GstElement *sub_element;
-  GESVideoSourceClass *source_class = GES_VIDEO_SOURCE_GET_CLASS (trksrc);
+  GESVideoSourceClass *vsource_class = GES_VIDEO_SOURCE_GET_CLASS (trksrc);
+  GESSourceClass *source_class = GES_SOURCE_GET_CLASS (trksrc);
   GESVideoSource *self;
   gboolean needs_converters = TRUE;
   GPtrArray *elements;
@@ -163,15 +197,15 @@ ges_video_source_create_element (GESTrackElement * trksrc)
   if (!source_class->create_source)
     return NULL;
 
-  sub_element = source_class->create_source (trksrc);
+  sub_element = source_class->create_source (GES_SOURCE (trksrc));
 
   self = (GESVideoSource *) trksrc;
-  if (source_class->ABI.abi.needs_converters)
-    needs_converters = source_class->ABI.abi.needs_converters (self);
+  if (vsource_class->ABI.abi.needs_converters)
+    needs_converters = vsource_class->ABI.abi.needs_converters (self);
 
   elements = g_ptr_array_new ();
-  g_assert (source_class->ABI.abi.create_filters);
-  if (!source_class->ABI.abi.create_filters (self, elements, needs_converters)) {
+  g_assert (vsource_class->ABI.abi.create_filters);
+  if (!vsource_class->ABI.abi.create_filters (self, elements, needs_converters)) {
     g_ptr_array_free (elements, TRUE);
 
     return NULL;
@@ -223,12 +257,12 @@ ges_video_source_class_init (GESVideoSourceClass * klass)
 
   element_class->set_priority = _set_priority;
   element_class->lookup_child = _lookup_child;
+  element_class->set_parent = _set_parent;
 
   track_element_class->nleobject_factorytype = "nlesource";
   track_element_class->create_element = ges_video_source_create_element;
   track_element_class->ABI.abi.default_track_type = GES_TRACK_TYPE_VIDEO;
 
-  video_source_class->create_source = NULL;
   video_source_class->ABI.abi.create_filters = ges_video_source_create_filters;
 }
 

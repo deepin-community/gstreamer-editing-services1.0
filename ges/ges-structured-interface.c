@@ -30,6 +30,32 @@
 #define LAST_CONTAINER_QDATA g_quark_from_string("ges-structured-last-container")
 #define LAST_CHILD_QDATA g_quark_from_string("ges-structured-last-child")
 
+#ifdef G_HAVE_ISO_VARARGS
+#define REPORT_UNLESS(condition, errpoint, ...)                                \
+  G_STMT_START {                                                               \
+    if (!(condition)) {                                                        \
+      gchar *tmp = gst_info_strdup_printf(__VA_ARGS__);                            \
+      *error = g_error_new_literal (GES_ERROR, 0, tmp);                        \
+      g_free (tmp);                                                            \
+      goto errpoint;                                                           \
+    }                                                                          \
+  }                                                                            \
+  G_STMT_END
+#else /* G_HAVE_GNUC_VARARGS */
+#ifdef G_HAVE_GNUC_VARARGS
+#define REPORT_UNLESS(condition, errpoint, args...)                            \
+  G_STMT_START {                                                               \
+    if (!(condition)) {                                                        \
+      gchar *tmp = gst_info_strdup_printf(##args);                            \
+      *error = g_error_new_literal (GES_ERROR, 0, tmp);                        \
+      g_free (tmp);                                                            \
+      goto errpoint;                                                           \
+    }                                                                          \
+  }                                                                            \
+  G_STMT_END
+#endif /* G_HAVE_ISO_VARARGS */
+#endif /* G_HAVE_GNUC_VARARGS */
+
 #define GET_AND_CHECK(name,type,var,label) G_STMT_START {\
   gboolean found = FALSE; \
 \
@@ -62,9 +88,49 @@
   }                                                        \
 } G_STMT_END
 
+static gboolean
+_get_structure_value (GstStructure * structure, const gchar * field, GType type,
+    gpointer v)
+{
+  gboolean res = TRUE;
+  const gchar *value_str;
+  const GValue *value;
+  GValue nvalue = G_VALUE_INIT;
+
+  if (gst_structure_get (structure, field, type, v, NULL))
+    return res;
+
+  g_value_init (&nvalue, type);
+  value = gst_structure_get_value (structure, field);
+  if (!value)
+    goto fail;
+
+  if (g_value_transform (value, &nvalue))
+    goto set_and_get_value;
+
+  if (!G_VALUE_HOLDS_STRING (value))
+    goto fail;
+
+  value_str = g_value_get_string (value);
+  if (!gst_value_deserialize (&nvalue, value_str))
+    goto done;
+
+set_and_get_value:
+  gst_structure_set_value (structure, field, &nvalue);
+  gst_structure_get (structure, field, type, v, NULL);
+
+done:
+  g_value_reset (&nvalue);
+  return res;
+
+fail:
+  res = FALSE;
+  goto done;
+}
+
 #define TRY_GET(name, type, var, def) G_STMT_START {\
   g_assert (type != GST_TYPE_CLOCK_TIME);                      \
-  if (!gst_structure_get (structure, name, type, var, NULL))\
+  if (!_get_structure_value (structure, name, type, var))\
     *var = def;                                             \
 } G_STMT_END
 
@@ -73,6 +139,21 @@ typedef struct
   const gchar **fields;
   GList *invalid_fields;
 } FieldsError;
+
+static gboolean
+enum_from_str (GType type, const gchar * str_enum, guint * enum_value)
+{
+  GValue value = G_VALUE_INIT;
+  g_value_init (&value, type);
+
+  if (!gst_value_deserialize (&value, str_enum))
+    return FALSE;
+
+  *enum_value = g_value_get_enum (&value);
+  g_value_unset (&value);
+
+  return TRUE;
+}
 
 static gboolean
 _check_field (GQuark field_id, const GValue * value, FieldsError * fields_error)
@@ -124,6 +205,77 @@ _check_fields (GstStructure * structure, FieldsError fields_error,
   return TRUE;
 }
 
+static GESTimelineElement *
+find_element_for_property (GESTimeline * timeline, GstStructure * structure,
+    gchar ** property_name, gboolean require_track_element, GError ** error)
+{
+  GList *tmp;
+  const gchar *element_name;
+  GESTimelineElement *element;
+
+  element_name = gst_structure_get_string (structure, "element-name");
+  if (element_name == NULL) {
+    element = g_object_get_qdata (G_OBJECT (timeline), LAST_CHILD_QDATA);
+    if (element)
+      gst_object_ref (element);
+  } else {
+    element = ges_timeline_get_element (timeline, element_name);
+  }
+
+  if (*property_name == NULL) {
+    gchar *tmpstr = *property_name;
+    const gchar *name = gst_structure_get_name (structure);
+
+    REPORT_UNLESS (g_str_has_prefix (name, "set-"), err,
+        "Could not find any property name in %" GST_PTR_FORMAT, structure);
+
+    *property_name = g_strdup (&tmpstr[4]);
+
+    g_free (tmpstr);
+  }
+
+  if (element) {
+    if (!ges_timeline_element_lookup_child (element,
+            *property_name, NULL, NULL)) {
+      gst_clear_object (&element);
+    }
+  }
+
+  if (!element) {
+    element = g_object_get_qdata (G_OBJECT (timeline), LAST_CONTAINER_QDATA);
+    if (element)
+      gst_object_ref (element);
+  }
+
+  REPORT_UNLESS (GES_IS_TIMELINE_ELEMENT (element), err,
+      "Could not find child %s from %" GST_PTR_FORMAT, element_name, structure);
+
+  if (!require_track_element || GES_IS_TRACK_ELEMENT (element))
+    return element;
+
+
+  REPORT_UNLESS (GES_IS_CONTAINER (element), err,
+      "Could not find child %s from %" GST_PTR_FORMAT, element_name, structure);
+
+  for (tmp = GES_CONTAINER_CHILDREN (element); tmp; tmp = tmp->next) {
+    if (ges_timeline_element_lookup_child (tmp->data, *property_name, NULL,
+            NULL)) {
+      gst_object_replace ((GstObject **) & element, tmp->data);
+
+      break;
+    }
+  }
+
+  REPORT_UNLESS (GES_IS_TRACK_ELEMENT (element), err,
+      "Could not find TrackElement from %" GST_PTR_FORMAT, structure);
+
+  return element;
+
+err:
+  g_clear_object (&element);
+  return element;
+}
+
 gboolean
 _ges_save_timeline_if_needed (GESTimeline * timeline, GstStructure * structure,
     GError ** error)
@@ -140,18 +292,124 @@ _ges_save_timeline_if_needed (GESTimeline * timeline, GstStructure * structure,
   return res;
 }
 
+typedef struct
+{
+  GstTimedValueControlSource *source;
+  GstStructure *structure;
+  GError *error;
+  const gchar *property_name;
+  gboolean res;
+} SetKeyframesData;
+
+
+typedef struct
+{
+  gboolean ok;
+  union
+  {
+    struct
+    {
+      gdouble v;
+    } Ok;
+
+    struct
+    {
+      const gchar *err;
+    } Err;
+  };
+} ValueToDoubleRes;
+
+static ValueToDoubleRes
+value_to_double (const GValue * v)
+{
+  GValue v2 = G_VALUE_INIT;
+  ValueToDoubleRes res = { 0, };
+
+  if (G_VALUE_HOLDS_STRING (v)) {
+    errno = 0;
+    res.Ok.v = g_ascii_strtod (g_value_get_string (v), NULL);
+
+    if (errno)
+      res.Err.err = g_strerror (errno);
+    else
+      res.ok = TRUE;
+
+    return res;
+  }
+
+  g_value_init (&v2, G_TYPE_DOUBLE);
+  res.ok = g_value_transform (v, &v2);
+  if (res.ok) {
+    res.Ok.v = g_value_get_double (&v2);
+  } else {
+    res.Err.err = "unsupported conversion";
+  }
+  g_value_reset (&v2);
+
+  return res;
+}
+
+static gboolean
+un_set_keyframes_foreach (GQuark field_id, const GValue * value,
+    SetKeyframesData * d)
+{
+  GError **error = &d->error;
+  gchar *tmp;
+  gint i;
+  const gchar *valid_fields[] = {
+    "element-name", "property-name", "value", "timestamp", "project-uri",
+    "binding-type", "source-type", "interpolation-mode", "interpolation-mode",
+    NULL
+  };
+  const gchar *field = g_quark_to_string (field_id);
+  gdouble ts;
+
+  for (i = 0; valid_fields[i]; i++) {
+    if (g_quark_from_string (valid_fields[i]) == field_id)
+      return TRUE;
+  }
+
+  errno = 0;
+  ts = g_strtod (field, &tmp);
+
+  REPORT_UNLESS (errno == 0 && field != tmp, err,
+      "Could not convert `%s` to GstClockTime (%s)", field, g_strerror (errno));
+
+  if (gst_structure_has_name (d->structure, "remove-keyframe")) {
+    REPORT_UNLESS (gst_timed_value_control_source_unset (d->source,
+            ts * GST_SECOND), err, "Could not unset keyframe at %f", ts);
+
+    return TRUE;
+  }
+
+  ValueToDoubleRes res = value_to_double (value);
+  REPORT_UNLESS (res.ok, err,
+      "Could not convert keyframe %f value (%s)%s to double (%s)", ts,
+      G_VALUE_TYPE_NAME (value), gst_value_serialize (value), res.Err.err);
+
+  REPORT_UNLESS (gst_timed_value_control_source_set (d->source, ts * GST_SECOND,
+          res.Ok.v), err, "Could not set keyframe %f=%f", ts, res.Ok.v);
+
+  return TRUE;
+
+err:
+  d->res = FALSE;
+  return FALSE;
+}
+
+
 gboolean
 _ges_add_remove_keyframe_from_struct (GESTimeline * timeline,
     GstStructure * structure, GError ** error)
 {
-  GESTrackElement *element;
+  GESTimelineElement *element = NULL;
 
   gboolean absolute;
   gdouble value;
   GstClockTime timestamp;
   GstControlBinding *binding = NULL;
   GstTimedValueControlSource *source = NULL;
-  gchar *element_name = NULL, *property_name = NULL;
+  gchar *property_name = NULL;
 
   gboolean ret = FALSE;
   gboolean setting_value;
@@ -163,71 +421,55 @@ _ges_add_remove_keyframe_from_struct (GESTimeline * timeline,
 
   FieldsError fields_error = { valid_fields, NULL };
 
-  if (!_check_fields (structure, fields_error, error))
-    return FALSE;
+  if (gst_structure_has_field (structure, "value")) {
+    if (!_check_fields (structure, fields_error, error))
+      return FALSE;
+    GET_AND_CHECK ("timestamp", GST_TYPE_CLOCK_TIME, &timestamp, done);
+  } else {
+    REPORT_UNLESS (!gst_structure_has_field (structure, "timestamp"), done,
+        "Doesn't have a `value` field in %" GST_PTR_FORMAT
+        " but has a `timestamp`" " that can't work!", structure);
+  }
 
-  GET_AND_CHECK ("element-name", G_TYPE_STRING, &element_name, done);
   GET_AND_CHECK ("property-name", G_TYPE_STRING, &property_name, done);
-  GET_AND_CHECK ("timestamp", GST_TYPE_CLOCK_TIME, &timestamp, done);
-
-  element =
-      (GESTrackElement *) ges_timeline_get_element (timeline, element_name);
-
-  if (GES_IS_CLIP (element)) {
-    GList *tmp;
-    for (tmp = GES_CONTAINER_CHILDREN (element); tmp; tmp = tmp->next) {
-      if (ges_timeline_element_lookup_child (tmp->data, property_name, NULL,
-              NULL)) {
-        gst_object_replace ((GstObject **) & element, tmp->data);
-
-        break;
-      }
-    }
-  }
-
-  if (!GES_IS_TRACK_ELEMENT (element)) {
-    *error =
-        g_error_new (GES_ERROR, 0, "Could not find TrackElement %s",
-        element_name);
-
+  if (!(element =
+          find_element_for_property (timeline, structure, &property_name, TRUE,
+              error)))
     goto done;
-  }
 
-  binding = ges_track_element_get_control_binding (element, property_name);
-  if (binding == NULL) {
-    *error = g_error_new (GES_ERROR, 0, "No control binding found for %s:%s"
-        " you should first set-control-binding on it",
-        element_name, property_name);
-
-    goto done;
-  }
+  REPORT_UNLESS (binding =
+      ges_track_element_get_control_binding (GES_TRACK_ELEMENT (element),
+          property_name),
+      done, "No control binding found for %" GST_PTR_FORMAT, structure);
 
   g_object_get (binding, "control-source", &source, NULL);
+  REPORT_UNLESS (source, done,
+      "No control source found for '%" GST_PTR_FORMAT
+      "' you should first set-control-binding on it", structure);
+  REPORT_UNLESS (GST_IS_TIMED_VALUE_CONTROL_SOURCE (source), done,
+      "You can use add-keyframe"
+      " only on GstTimedValueControlSource not %s",
+      G_OBJECT_TYPE_NAME (source));
 
-  if (source == NULL) {
-    *error = g_error_new (GES_ERROR, 0, "No control source found for %s:%s"
-        " you should first set-control-binding on it",
-        element_name, property_name);
+  if (!gst_structure_has_field (structure, "value")) {
+    SetKeyframesData d = {
+      source, structure, NULL, property_name, TRUE,
+    };
+    gst_structure_foreach (structure,
+        (GstStructureForeachFunc) un_set_keyframes_foreach, &d);
+    if (!d.res)
+      g_propagate_error (error, d.error);
 
-    goto done;
-  }
-
-  if (!GST_IS_TIMED_VALUE_CONTROL_SOURCE (source)) {
-    *error = g_error_new (GES_ERROR, 0, "You can use add-keyframe"
-        " only on GstTimedValueControlSource not %s",
-        G_OBJECT_TYPE_NAME (source));
-
-    goto done;
+    return d.res;
   }
 
   g_object_get (binding, "absolute", &absolute, NULL);
   if (absolute) {
     GParamSpec *pspec;
     const GValue *v;
-    GValue v2 = G_VALUE_INIT;
 
-    if (!ges_timeline_element_lookup_child (GES_TIMELINE_ELEMENT (element),
-            property_name, NULL, &pspec)) {
+    if (!ges_timeline_element_lookup_child (element, property_name, NULL,
+            &pspec)) {
       *error =
           g_error_new (GES_ERROR, 0, "Could not get property %s for %s",
           property_name, GES_TIMELINE_ELEMENT_NAME (element));
@@ -246,8 +488,8 @@ _ges_add_remove_keyframe_from_struct (GESTimeline * timeline,
       goto done;
     }
 
-    g_value_init (&v2, G_TYPE_DOUBLE);
-    if (!g_value_transform (v, &v2)) {
+    ValueToDoubleRes res = value_to_double (v);
+    if (!res.ok) {
       gchar *struct_str = gst_structure_to_string (structure);
 
       *error = g_error_new (GES_ERROR, 0,
@@ -257,13 +499,14 @@ _ges_add_remove_keyframe_from_struct (GESTimeline * timeline,
       g_free (struct_str);
       goto done;
     }
-    value = g_value_get_double (&v2);
-    g_value_reset (&v2);
-  } else
-    GET_AND_CHECK ("value", G_TYPE_DOUBLE, &value, done);
 
-  setting_value
-      = !g_strcmp0 (gst_structure_get_name (structure), "add-keyframe");
+    value = res.Ok.v;
+  } else {
+    GET_AND_CHECK ("value", G_TYPE_DOUBLE, &value, done);
+  }
+
+  setting_value =
+      !g_strcmp0 (gst_structure_get_name (structure), "add-keyframe");
   if (setting_value)
     ret = gst_timed_value_control_source_set (source, timestamp, value);
   else
@@ -278,9 +521,8 @@ _ges_add_remove_keyframe_from_struct (GESTimeline * timeline,
   ret = _ges_save_timeline_if_needed (timeline, structure, error);
 
 done:
-  if (source)
-    gst_object_unref (source);
-  g_free (element_name);
+  gst_clear_object (&source);
+  gst_clear_object (&element);
   g_free (property_name);
 
   return ret;
@@ -520,17 +762,11 @@ _ges_add_clip_from_struct (GESTimeline * timeline, GstStructure * structure,
 
     if (GES_IS_TEST_CLIP (clip)) {
       if (pattern) {
-        GEnumClass *enum_class =
-            G_ENUM_CLASS (g_type_class_ref (GES_VIDEO_TEST_PATTERN_TYPE));
-        GEnumValue *value = g_enum_get_value_by_nick (enum_class, pattern);
+        guint v;
 
-        if (!value) {
-          res = FALSE;
-          goto beach;
-        }
-
-        ges_test_clip_set_vpattern (GES_TEST_CLIP (clip), value->value);
-        g_type_class_unref (enum_class);
+        REPORT_UNLESS (enum_from_str (GES_VIDEO_TEST_PATTERN_TYPE, pattern, &v),
+            beach, "Invalid pattern: %s", pattern);
+        ges_test_clip_set_vpattern (GES_TEST_CLIP (clip), v);
       }
     }
 
@@ -567,6 +803,69 @@ beach:
   g_free (asset_id);
   g_free (check_asset_id);
   return res;
+}
+
+gboolean
+_ges_add_track_from_struct (GESTimeline * timeline,
+    GstStructure * structure, GError ** error)
+{
+  const gchar *ttype;
+  GESTrack *track;
+  GstCaps *caps;
+
+  const gchar *valid_fields[] = { "type", "restrictions", NULL };
+
+  FieldsError fields_error = { valid_fields, NULL };
+
+  if (!_check_fields (structure, fields_error, error))
+    return FALSE;
+
+  ttype = gst_structure_get_string (structure, "type");
+  if (!g_strcmp0 (ttype, "video")) {
+    track = GES_TRACK (ges_video_track_new ());
+  } else if (!g_strcmp0 (ttype, "audio")) {
+    track = GES_TRACK (ges_audio_track_new ());
+  } else {
+    g_set_error (error, GES_ERROR, 0, "Unhandled track type: `%s`", ttype);
+
+    return FALSE;
+  }
+
+  if (gst_structure_has_field (structure, "restrictions")) {
+    GstStructure *restriction_struct;
+    gchar *restriction_str;
+
+    if (gst_structure_get (structure, "restrictions", GST_TYPE_STRUCTURE,
+            &restriction_struct, NULL)) {
+      caps = gst_caps_new_full (restriction_struct, NULL);
+    } else if (gst_structure_get (structure, "restrictions", G_TYPE_STRING,
+            &restriction_str, NULL)) {
+      caps = gst_caps_from_string (restriction_str);
+
+      if (!caps) {
+        g_set_error (error, GES_ERROR, 0, "Invalid restrictions caps: %s",
+            restriction_str);
+
+        g_free (restriction_str);
+        return FALSE;
+      }
+      g_free (restriction_str);
+    } else if (!gst_structure_get (structure, "restrictions", GST_TYPE_CAPS,
+            &caps, NULL)) {
+      gchar *tmp = gst_structure_to_string (structure);
+
+      g_set_error (error, GES_ERROR, 0, "Can't use restrictions caps from %s",
+          tmp);
+
+      g_object_unref (track);
+      return FALSE;
+    }
+
+    ges_track_set_restriction_caps (track, caps);
+    gst_caps_unref (caps);
+  }
+
+  return ges_timeline_add_track (timeline, track);
 }
 
 gboolean
@@ -688,9 +987,23 @@ _ges_container_add_child_from_struct (GESTimeline * timeline,
 
   }
 
-  res = ges_container_add (container, child);
+  if (GES_IS_CLIP (container) && GES_IS_BASE_EFFECT (child)) {
+    GList *effects = ges_clip_get_top_effects (GES_CLIP (container));
+
+    res =
+        ges_clip_add_top_effect (GES_CLIP (container), GES_BASE_EFFECT (child),
+        0, error);
+
+    g_list_free_full (effects, gst_object_unref);
+  } else {
+    res = ges_container_add (container, child);
+  }
+
   if (res == FALSE) {
-    g_error_new (GES_ERROR, 0, "Could not add child to container");
+    if (!*error)
+      *error = g_error_new (GES_ERROR, 0, "Could not add child to container");
+
+    goto beach;
   } else {
     g_object_set_qdata (G_OBJECT (timeline), LAST_CHILD_QDATA, child);
   }
@@ -706,8 +1019,12 @@ _ges_set_child_property_from_struct (GESTimeline * timeline,
     GstStructure * structure, GError ** error)
 {
   const GValue *value;
+  GValue prop_value = G_VALUE_INIT;
+  gboolean prop_value_set = FALSE;
+  gchar *property_name;
   GESTimelineElement *element;
-  const gchar *property_name, *element_name;
+  gchar *serialized;
+  gboolean res;
 
   const gchar *valid_fields[] =
       { "element-name", "property", "value", "project-uri", NULL };
@@ -717,62 +1034,50 @@ _ges_set_child_property_from_struct (GESTimeline * timeline,
   if (!_check_fields (structure, fields_error, error))
     return FALSE;
 
-  element_name = gst_structure_get_string (structure, "element-name");
-  if (element_name == NULL)
-    element = g_object_get_qdata (G_OBJECT (timeline), LAST_CHILD_QDATA);
-  else
-    element = ges_timeline_get_element (timeline, element_name);
+  GET_AND_CHECK ("property", G_TYPE_STRING, &property_name, err);
 
-  property_name = gst_structure_get_string (structure, "property");
-  if (property_name == NULL) {
-    const gchar *name = gst_structure_get_name (structure);
-
-    if (g_str_has_prefix (name, "set-"))
-      property_name = &name[4];
-    else {
-      gchar *struct_str = gst_structure_to_string (structure);
-
-      *error =
-          g_error_new (GES_ERROR, 0, "Could not find any property name in %s",
-          struct_str);
-      g_free (struct_str);
-
-      return FALSE;
-    }
-  }
-
-  if (element) {
-    if (!ges_track_element_lookup_child (GES_TRACK_ELEMENT (element),
-            property_name, NULL, NULL))
-      element = NULL;
-  }
-
-  if (!element) {
-    element = g_object_get_qdata (G_OBJECT (timeline), LAST_CONTAINER_QDATA);
-
-    if (element == NULL) {
-      *error =
-          g_error_new (GES_ERROR, 0,
-          "Could not find anywhere to set property: %s", property_name);
-
-      return FALSE;
-    }
-  }
-
-  if (!GES_IS_TIMELINE_ELEMENT (element)) {
-    *error =
-        g_error_new (GES_ERROR, 0, "Could not find child %s", element_name);
-
-    return FALSE;
-  }
+  if (!(element =
+          find_element_for_property (timeline, structure, &property_name, FALSE,
+              error)))
+    goto err;
 
   value = gst_structure_get_value (structure, "value");
 
-  g_print ("%s Setting %s property to %s\n", element->name, property_name,
-      gst_value_serialize (value));
+  if (G_VALUE_TYPE (value) == G_TYPE_STRING) {
+    GParamSpec *pspec;
+    if (ges_timeline_element_lookup_child (element, property_name, NULL,
+            &pspec)) {
+      GType p_type = pspec->value_type;
+      g_param_spec_unref (pspec);
+      if (p_type != G_TYPE_STRING) {
+        const gchar *val_string = g_value_get_string (value);
+        g_value_init (&prop_value, p_type);
+        if (!gst_value_deserialize (&prop_value, val_string)) {
+          *error = g_error_new (GES_ERROR, 0, "Could not set the property %s "
+              "because the value %s could not be deserialized to the %s type",
+              property_name, val_string, g_type_name (p_type));
+          return FALSE;
+        }
+        prop_value_set = TRUE;
+      }
+    }
+    /* else, let the setter fail below */
+  }
 
-  if (!ges_timeline_element_set_child_property (element, property_name,
-          (GValue *) value)) {
+  if (!prop_value_set) {
+    g_value_init (&prop_value, G_VALUE_TYPE (value));
+    g_value_copy (value, &prop_value);
+  }
+
+  serialized = gst_value_serialize (&prop_value);
+  GST_INFO_OBJECT (element, "Setting property %s to %s\n", property_name,
+      serialized);
+  g_free (serialized);
+
+  res = ges_timeline_element_set_child_property (element, property_name,
+      &prop_value);
+  g_value_unset (&prop_value);
+  if (!res) {
     guint n_specs, i;
     GParamSpec **specs =
         ges_timeline_element_list_children_properties (element, &n_specs);
@@ -791,7 +1096,81 @@ _ges_set_child_property_from_struct (GESTimeline * timeline,
 
     return FALSE;
   }
+  g_free (property_name);
   return _ges_save_timeline_if_needed (timeline, structure, error);
+
+err:
+  g_free (property_name);
+  return FALSE;
+}
+
+gboolean
+_ges_set_control_source_from_struct (GESTimeline * timeline,
+    GstStructure * structure, GError ** error)
+{
+  guint mode;
+  gboolean res = FALSE;
+  GESTimelineElement *element = NULL;
+
+  GstControlSource *source = NULL;
+  gchar *property_name, *binding_type = NULL,
+      *source_type = NULL, *interpolation_mode = NULL;
+
+  GET_AND_CHECK ("property-name", G_TYPE_STRING, &property_name, beach);
+
+  if (!(element =
+          find_element_for_property (timeline, structure, &property_name, TRUE,
+              error)))
+    goto beach;
+
+  if (GES_IS_CLIP (element)) {
+    GList *tmp;
+    for (tmp = GES_CONTAINER_CHILDREN (element); tmp; tmp = tmp->next) {
+      if (ges_timeline_element_lookup_child (tmp->data, property_name, NULL,
+              NULL)) {
+        gst_object_replace ((GstObject **) & element, tmp->data);
+
+        break;
+      }
+    }
+  }
+
+  REPORT_UNLESS (GES_IS_TRACK_ELEMENT (element), beach,
+      "Could not find TrackElement from %" GST_PTR_FORMAT, structure);
+
+  TRY_GET ("binding-type", G_TYPE_STRING, &binding_type, NULL);
+  TRY_GET ("source-type", G_TYPE_STRING, &source_type, NULL);
+  TRY_GET ("interpolation-mode", G_TYPE_STRING, &interpolation_mode, NULL);
+
+  if (!binding_type)
+    binding_type = g_strdup ("direct");
+
+  REPORT_UNLESS (source_type == NULL
+      || !g_strcmp0 (source_type, "interpolation"), beach,
+      "Interpolation type %s not supported", source_type);
+  source = gst_interpolation_control_source_new ();
+
+  if (interpolation_mode)
+    REPORT_UNLESS (enum_from_str (GST_TYPE_INTERPOLATION_MODE,
+            interpolation_mode, &mode), beach,
+        "Wrong interpolation mode: %s", interpolation_mode);
+  else
+    mode = GST_INTERPOLATION_MODE_LINEAR;
+
+  g_object_set (source, "mode", mode, NULL);
+
+  res = ges_track_element_set_control_source (GES_TRACK_ELEMENT (element),
+      source, property_name, binding_type);
+
+beach:
+  gst_clear_object (&element);
+  gst_clear_object (&source);
+  g_free (property_name);
+  g_free (binding_type);
+  g_free (source_type);
+  g_free (interpolation_mode);
+
+  return res;
 }
 
 #undef GET_AND_CHECK

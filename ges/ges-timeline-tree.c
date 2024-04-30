@@ -24,6 +24,7 @@
 
 #include "ges-timeline-tree.h"
 #include "ges-internal.h"
+#include "ges-marker-list.h"
 
 GST_DEBUG_CATEGORY_STATIC (tree_debug);
 #undef GST_CAT_DEFAULT
@@ -183,11 +184,11 @@ static gboolean
 print_node (GNode * node, gpointer unused_data)
 {
   if (G_NODE_IS_ROOT (node)) {
-    g_print ("Timeline: %p\n", node->data);
+    gst_print ("Timeline: %p\n", node->data);
     return FALSE;
   }
 
-  g_print ("%*c- %" GES_FORMAT " - layer %" G_GINT32_FORMAT "\n",
+  gst_print ("%*c- %" GES_FORMAT " - layer %" G_GINT32_FORMAT "\n",
       2 * g_node_depth (node), ' ', GES_ARGS (node->data),
       ges_timeline_element_get_layer_priority (node->data));
 
@@ -401,6 +402,28 @@ get_start_end_from_offset (GESTimelineElement * element, ElementEditMode mode,
  ****************************************************/
 
 static void
+snap_to_marker (GESTrackElement * element, GstClockTime position,
+    gboolean negative, GstClockTime marker_timestamp,
+    GESTrackElement * marker_parent, SnappedPosition * snap)
+{
+  GstClockTime distance;
+
+  if (negative)
+    distance = _clock_time_plus (position, marker_timestamp);
+  else
+    distance = _abs_clock_time_distance (position, marker_timestamp);
+
+  if (GST_CLOCK_TIME_IS_VALID (distance) && distance <= snap->distance) {
+    snap->negative = negative;
+    snap->position = position;
+    snap->distance = distance;
+    snap->snapped = marker_timestamp;
+    snap->element = element;
+    snap->snapped_to = marker_parent;
+  }
+}
+
+static void
 snap_to_edge (GESTrackElement * element, GstClockTime position,
     gboolean negative, GESTrackElement * snap_to, GESEdge edge,
     SnappedPosition * snap)
@@ -431,6 +454,55 @@ snap_to_edge (GESTrackElement * element, GstClockTime position,
   }
 }
 
+static void
+find_marker_snap (const GESMetaContainer * container, const gchar * key,
+    const GValue * value, TreeIterationData * data)
+{
+  GESTrackElement *marker_parent, *moving;
+  GESClip *parent_clip;
+  GstClockTime timestamp;
+  GESMarkerList *marker_list;
+  GESMarker *marker;
+  GESMarkerFlags flags;
+  GObject *obj;
+
+  if (!G_VALUE_HOLDS_OBJECT (value))
+    return;
+
+  obj = g_value_get_object (value);
+  if (!GES_IS_MARKER_LIST (obj))
+    return;
+
+  marker_list = GES_MARKER_LIST (obj);
+
+  g_object_get (marker_list, "flags", &flags, NULL);
+  if (!(flags & GES_MARKER_FLAG_SNAPPABLE))
+    return;
+
+  marker_parent = GES_TRACK_ELEMENT ((gpointer) container);
+  moving = GES_TRACK_ELEMENT (data->element);
+  parent_clip = (GESClip *) GES_TIMELINE_ELEMENT_PARENT (marker_parent);
+
+  /* Translate current position into the target clip's time domain */
+  timestamp =
+      ges_clip_get_internal_time_from_timeline_time (parent_clip, marker_parent,
+      data->position, NULL);
+  marker = ges_marker_list_get_closest (marker_list, timestamp);
+
+  if (marker == NULL)
+    return;
+
+  /* Make timestamp timeline-relative again */
+  g_object_get (marker, "position", &timestamp, NULL);
+  timestamp =
+      ges_clip_get_timeline_time_from_internal_time (parent_clip, marker_parent,
+      timestamp, NULL);
+  snap_to_marker (moving, data->position, data->negative, timestamp,
+      marker_parent, data->snap);
+
+  g_object_unref (marker);
+}
+
 static gboolean
 find_snap (GNode * node, TreeIterationData * data)
 {
@@ -453,6 +525,9 @@ find_snap (GNode * node, TreeIterationData * data)
       GES_EDGE_END, data->snap);
   snap_to_edge (moving, data->position, data->negative, track_el,
       GES_EDGE_START, data->snap);
+
+  ges_meta_container_foreach (GES_META_CONTAINER (element),
+      (GESMetaForeachFunc) find_marker_snap, data);
 
   return FALSE;
 }
@@ -854,6 +929,11 @@ timeline_tree_can_move_elements (GNode * root, GHashTable * moving,
     GError ** error)
 {
   TreeIterationData data = tree_iteration_data_init;
+
+  if (ges_timeline_get_edit_apis_disabled (root->data)) {
+    return TRUE;
+  }
+
   data.moving = moving;
   data.root = root;
   data.res = TRUE;
@@ -1627,6 +1707,10 @@ timeline_tree_can_move_element (GNode * root,
   GHashTable *move_edits, *trim_edits, *moving;
   GHashTableIter iter;
   gpointer key, value;
+
+  if (ges_timeline_get_edit_apis_disabled (root->data)) {
+    return TRUE;
+  }
 
   if (layer_prio == GES_TIMELINE_ELEMENT_NO_LAYER_PRIORITY
       && priority != layer_prio) {
