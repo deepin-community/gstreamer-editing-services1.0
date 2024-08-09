@@ -1,3 +1,110 @@
+=== release 1.24.6 ===
+
+2024-07-29 16:41:37 +0100  Tim-Philipp Müller <tim@centricular.com>
+
+	* NEWS:
+	* RELEASE:
+	* gst-editing-services.doap:
+	* meson.build:
+	  Release 1.24.6
+
+2024-06-29 09:52:42 +0200  Edward Hervey <edward@centricular.com>
+
+	  nlecomposition: Don't leak atomic rc box
+	  * gst_structure_get => increases ref
+	  * query_ancestors_position: There are two refs.
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/7120>
+
+2024-06-29 09:52:23 +0200  Edward Hervey <edward@centricular.com>
+
+	* plugins/nle/nlecomposition.c:
+	  nlecomposition: Don't leak message
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/7120>
+
+2024-06-29 09:51:46 +0200  Edward Hervey <edward@centricular.com>
+
+	* ges/ges-track.c:
+	  ges-layer: Don't use invalid layers
+	  There's a possibility that there are no layers at that priority
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/7120>
+
+2024-06-29 09:51:07 +0200  Edward Hervey <edward@centricular.com>
+
+	* ges/ges-discoverer-manager.c:
+	  ges-discoverer-manager: Properly initialize/free GRecMutex
+	  Fixes small leak of mutex internals
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/7120>
+
+2024-06-20 13:02:19 +0100  Tim-Philipp Müller <tim@centricular.com>
+
+	* meson.build:
+	  Back to development after 1.24.5
+
+=== release 1.24.5 ===
+
+2024-06-20 12:54:15 +0100  Tim-Philipp Müller <tim@centricular.com>
+
+	* NEWS:
+	* RELEASE:
+	* gst-editing-services.doap:
+	* meson.build:
+	  Release 1.24.5
+
+2024-05-29 13:51:27 +0300  Tim-Philipp Müller <tim@centricular.com>
+
+	* meson.build:
+	  Back to development after 1.24.4
+
+=== release 1.24.4 ===
+
+2024-05-29 13:44:50 +0300  Tim-Philipp Müller <tim@centricular.com>
+
+	* NEWS:
+	* RELEASE:
+	* gst-editing-services.doap:
+	* meson.build:
+	  Release 1.24.4
+
+2024-04-17 10:23:29 +0200  Edward Hervey <edward@centricular.com>
+
+	* ges/ges-pipeline.c:
+	  ges-pipeline: Configure encodebin before linking
+	  Modifying the `avoid-reencoding` property of `encodebin` could potentially cause
+	  it to reconfigure itself, in which case the source pad will be removed and then
+	  re-added.
+	  Therefore set that property *before* attempting to link to that pad.
+	  Fixes smart-render
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/6785>
+
+2024-04-30 00:36:59 +0100  Tim-Philipp Müller <tim@centricular.com>
+
+	* meson.build:
+	  Back to development after 1.24.3
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/6772>
+
+=== release 1.24.3 ===
+
+2024-04-30 00:15:23 +0100  Tim-Philipp Müller <tim@centricular.com>
+
+	* NEWS:
+	* RELEASE:
+	* gst-editing-services.doap:
+	* meson.build:
+	  Release 1.24.3
+
+2024-04-17 13:53:21 +0200  Edward Hervey <edward@centricular.com>
+
+	* tools/ges-launcher.c:
+	  ges-launcher: Fix for forcing container profiles
+	  If the input profile doesn't have a container, it's fine since we are overriding
+	  it. Just add the elementary stream to the target container profile
+	  Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/6675>
+
+2024-04-10 00:04:02 +0100  Tim-Philipp Müller <tim@centricular.com>
+
+	* meson.build:
+	  Back to development after 1.24.2
+
 === release 1.24.2 ===
 
 2024-04-09 21:48:55 +0100  Tim-Philipp Müller <tim@centricular.com>

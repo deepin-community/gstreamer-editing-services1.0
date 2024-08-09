@@ -1,8 +1,27 @@
-gstreamer-editing-services1.0 (1.24.2-1deepin1) unstable; urgency=medium
+gstreamer-editing-services1.0 (1.24.6-1) unstable; urgency=medium
 
-  * No source change upload against python 3.12.
+  * New upstream version 1.24.6
 
- -- Tianyu Chen <sweetyfish@deepin.org>  Mon, 08 Jul 2024 09:50:47 +0200
+ -- Marc Leeman <marc.leeman@gmail.com>  Mon, 29 Jul 2024 19:38:05 +0200
+
+gstreamer-editing-services1.0 (1.24.5-1) unstable; urgency=medium
+
+  * New upstream version 1.24.5
+
+ -- Marc Leeman <marc.leeman@gmail.com>  Thu, 20 Jun 2024 16:46:36 +0200
+
+gstreamer-editing-services1.0 (1.24.4-1) unstable; urgency=medium
+
+  * d/rules: debian-rules-parses-dpkg-parsechangelog
+  * New upstream version 1.24.4
+
+ -- Marc Leeman <marc.leeman@gmail.com>  Wed, 29 May 2024 14:32:32 +0200
+
+gstreamer-editing-services1.0 (1.24.3-1) unstable; urgency=medium
+
+  * New upstream version 1.24.3
+
+ -- Marc Leeman <marc.leeman@gmail.com>  Tue, 30 Apr 2024 11:40:46 +0200
 
 gstreamer-editing-services1.0 (1.24.2-1) unstable; urgency=medium
 
